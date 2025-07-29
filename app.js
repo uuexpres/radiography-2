@@ -21,7 +21,7 @@ const { Server } = require('socket.io');
 const io = new Server(server);
 
 // ✅ Port
-const port = 4072;
+const port = 3000;
 
 // ✅ Middleware Setup
 app.use(bodyParser.urlencoded({ extended: true }));
