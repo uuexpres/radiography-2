@@ -150,6 +150,13 @@ const storage = multer.diskStorage({
   }
 });
 
+// ✅ Route to get user count
+app.get('/api/user-count', async (req, res) => {
+  const count = await User.countDocuments();
+  res.json({ count });
+});
+
+
 const upload = multer({ storage });
 
 // ✅ Middleware: Upload handler for multiple fields (e.g., reference and explanation images)
