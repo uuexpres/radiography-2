@@ -157,6 +157,24 @@ app.get('/api/user-count', async (req, res) => {
 });
 
 
+
+// ✅ Should be defined
+app.get('/api/users', async (req, res) => {
+  const users = await User.find();
+  res.json(users);
+});
+
+// GET /api/users – return all user data
+app.get('/api/users', async (req, res) => {
+  try {
+    const users = await User.find(); // Adjust to .select(...) if you want to limit fields
+    res.json(users);
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error });
+  }
+});
+
+
 const upload = multer({ storage });
 
 // ✅ Middleware: Upload handler for multiple fields (e.g., reference and explanation images)
