@@ -4,11 +4,10 @@ const mongoose = require('mongoose');
 const multer = require('multer');
 const xlsx = require('xlsx');
 const path = require('path');
-const bodyParser = require('body-parser');
 const session = require('express-session');
 const fs = require('fs');
-const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
-
+const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
+const { Parser } = require('json2csv');
 
 
 // ✅ Initialize Express App First
@@ -21,29 +20,33 @@ const { Server } = require('socket.io');
 const io = new Server(server);
 
 // ✅ Port
-const port = 3000;
+const port = 3068;
+
 
 // ✅ Middleware Setup
-app.use(bodyParser.urlencoded({ extended: true }));
-app.use(bodyParser.json());
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use(express.json());                       // replaces bodyParser.json()
+app.use(express.urlencoded({ extended: true })); // replaces bodyParser.urlencoded()
 
+// ✅ Session (must come before routes)
 app.use(session({
-  secret: 'your-secret-key',
+  secret: 'superSecretKey123',   // 🔒 change in production
   resave: false,
   saveUninitialized: false,
-  cookie: {
-    secure: false,               // must remain false if not using HTTPS
-    maxAge: 1000 * 60 * 30       // ✅ 30 minutes
-  }
+  cookie: { maxAge: 1000 * 60 * 60 * 2 } // 2 hours
 }));
 
-app.use(express.urlencoded({ extended: true }));
+// ✅ Static assets (safe order)
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use('/hero', express.static(path.join(__dirname, 'public/hero')));
+app.use(express.static(path.join(__dirname, 'public')));
 
 // ✅ MongoDB Connection
 mongoose.connect('mongodb+srv://mac45:v47JmiGYELJymsMf@cluster0.rwhns6e.mongodb.net/radiographytestappss', {})
   .then(() => console.log('✅ Connected to MongoDB'))
   .catch(err => console.error('❌ MongoDB connection error:', err));
+
+
+
 
 // ✅ Schemas & Models
 const questionSchema = new mongoose.Schema({
@@ -138,6 +141,7 @@ const Test = mongoose.model('Test', testSchema);
 const Result = mongoose.model('Result', resultSchema);
 const User = mongoose.model('User', userSchema);
 
+
 // ✅ File Upload Setup
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -150,24 +154,54 @@ const storage = multer.diskStorage({
   }
 });
 
-// ✅ Route to get user count
+
+
+// ✅ ================= USER ANALYTICS ROUTES =================
+
+// Route: GET /api/user-count
+// Purpose: Returns total number of users in the database (useful for dashboards/analytics).
 app.get('/api/user-count', async (req, res) => {
   const count = await User.countDocuments();
   res.json({ count });
 });
 
 
+// ✅ ================= USER EXPORT ROUTES =================
 
-// ✅ Should be defined
+// Route: GET /api/export-csv
+// Purpose: Exports all users as a CSV file (admin/reporting utility).
+app.get('/api/export-csv', async (req, res) => {
+  try {
+    const users = await User.find().lean(); // Fetch MongoDB data in plain JSON
+    const fields = ['_id', 'name', 'email', 'state', 'country']; // Define CSV fields
+    const json2csv = new Parser({ fields });
+    const csv = json2csv.parse(users);
+
+    // Set headers so browser downloads the file
+    res.header('Content-Type', 'text/csv');
+    res.attachment('users.csv');
+    res.send(csv);
+  } catch (error) {
+    res.status(500).json({ message: 'Error generating CSV', error });
+  }
+});
+
+
+// ✅ ================= USER MANAGEMENT ROUTES =================
+
+// Route: GET /api/users
+// Purpose: Fetch all users (basic fetch, no error handling).
 app.get('/api/users', async (req, res) => {
   const users = await User.find();
   res.json(users);
 });
 
-// GET /api/users – return all user data
+// Route: GET /api/users
+// Purpose: Fetch all users (with error handling). 
+// NOTE: This second definition overwrites the first in Express.
 app.get('/api/users', async (req, res) => {
   try {
-    const users = await User.find(); // Adjust to .select(...) if you want to limit fields
+    const users = await User.find(); // Use .select(...) if you want to limit fields
     res.json(users);
   } catch (error) {
     res.status(500).json({ message: 'Server error', error });
@@ -175,21 +209,32 @@ app.get('/api/users', async (req, res) => {
 });
 
 
+// ✅ ================= FILE UPLOAD MIDDLEWARE =================
+
+// Multer upload configuration
 const upload = multer({ storage });
 
-// ✅ Middleware: Upload handler for multiple fields (e.g., reference and explanation images)
+// Middleware: Handles uploading multiple types of images in a single request.
+// - 'referenceImages' → up to 5 files
+// - 'explanationImages' → up to 5 files
 const uploadMultiple = upload.fields([
   { name: 'referenceImages', maxCount: 5 },
   { name: 'explanationImages', maxCount: 5 }
 ]);
 
-// ✅ Online User Tracking with Socket.IO
+
+// ✅ ================= REAL-TIME USER PRESENCE =================
+
+// Track online users using Socket.IO
+// - Marks users online when they connect
+// - Updates lastSeen + sets offline when they disconnect
 const onlineUsers = new Map();
 
 io.on('connection', (socket) => {
   const userId = socket.handshake.query.userId;
 
   if (userId) {
+    // Store user as online
     onlineUsers.set(userId, socket.id);
     User.findByIdAndUpdate(userId, {
       isOnline: true,
@@ -198,6 +243,7 @@ io.on('connection', (socket) => {
     console.log(`🟢 User connected: ${userId}`);
   }
 
+  // Handle user disconnect
   socket.on('disconnect', async () => {
     if (userId) {
       onlineUsers.delete(userId);
@@ -211,107 +257,30 @@ io.on('connection', (socket) => {
 });
 
 
+// ✅ ================= NOTIFICATION SERVICE =================
+
+// Function: notifyLogin
+// Purpose: Sends a push notification on login (via Firebase Cloud Messaging).
+// Currently just logs the call and response.
 
 
 
-// Dummy FCM send for testing (no actual push, just log to console)
-async function notifyLogin(user, deviceToken) {
-  console.log('🛎️ notifyLogin CALLED with:', user.name, deviceToken);
 
-  // If you want to skip FCM for now, just print
-  // Uncomment this if you want to skip sending FCM for now
-  // return;
+/* ========================================================================== *
+ * AUTH / SESSION (UI)
+ * --------------------------------------------------------------------------
+ */
 
-  // -- If using FCM, fill in the following:
-  const fcmEndpoint = 'https://fcm.googleapis.com/fcm/send';
-  const serverKey = 'YOUR_REAL_FCM_SERVER_KEY';
-  const message = {
-    to: deviceToken,
-    notification: {
-      title: 'Login Successful!',
-      body: `User ${user.name} just logged in.`
-    }
-  };
 
-  const res = await fetch(fcmEndpoint, {
-    method: 'POST',
-    headers: {
-      'Authorization': `key=${serverKey}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify(message)
-  });
-  const data = await res.json();
-  console.log('📦 FCM response:', data);
+function requireLogin(req, res, next) {
+  if (!req.session.userId) {
+    console.log('🔒 No session found — redirecting to /login');
+    return res.redirect('/login');
+  }
+  console.log('✅ User session:', req.session.userId);
+  next();
 }
-
-
-
-
-////// Results //////
-app.get('/user/results', async (req, res) => {
-  const userId = req.session.userId;
-  if (!userId) return res.redirect('/login');
-
-  const results = await Result.find({ userId }).populate('testId').sort({ createdAt: -1 });
-
-  const rows = results.map(r => `
-    <tr>
-      <td>${r.testId ? r.testId.title : '— Deleted Test —'}</td>
-      <td>${r.score}%</td>
-      <td>${r.correctAnswers}/${r.totalQuestions}</td>
-      <td>${new Date(r.createdAt).toLocaleDateString()}</td>
-    </tr>
-  `).join('');
-
-  res.send(`
-<!DOCTYPE html>
-<html>
-<head>
-  <title>My Results – Radiography Assistant</title>
-  <style>
-    body { font-family: Arial, sans-serif; background: #f8f9fb; margin: 0; padding: 40px; }
-    h2 { color: #0f1f3e; }
-    table {
-      width: 100%; border-collapse: collapse; background: #ffffff;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.05); margin-top: 20px;
-    }
-    th, td {
-      padding: 14px; text-align: left; font-size: 14px;
-      border-bottom: 1px solid #eee;
-    }
-    th {
-      background: #0f1f3e; color: white;
-      text-transform: uppercase; font-size: 12px;
-    }
-    tr:hover { background-color: #f6f9ff; }
-  </style>
-</head>
-<body>
-  <h2>📈 My Test Results</h2>
-  <table>
-    <thead>
-      <tr>
-        <th>Test</th>
-        <th>Score</th>
-        <th>Correct</th>
-        <th>Date</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${rows}
-    </tbody>
-  </table>
-</body>
-</html>
-  `);
-});
-
-
-
-
-
-/////Resutl///////
+ 
 
 app.get('/login', (req, res) => {
   const usStates = [
@@ -452,7 +421,6 @@ app.post('/login', async (req, res) => {
   req.session.userName = user.name;
   console.log(`🚀 Login successful – redirecting to /test-center`);
 
-  notifyLogin(user, deviceToken); // Optional push logic
 
   res.redirect('/test-center');
 });
@@ -463,1429 +431,52 @@ app.get('/logout', (req, res) => {
   res.redirect('/login');
 });
 
-app.post('/submit-test', async (req, res) => {
-  const { testId, ...answers } = req.body;
-  const questions = await Question.find({ testId });
 
-  let correctCount = 0;
 
-  const detailedResults = await Promise.all(
-    questions.map(async (q) => {
-      const selected = answers[`q_${q._id}`];
-      const correct = q.correct || q.correctAnswer || ''; // safe fallback
-      const isCorrect = selected === correct;
-      if (isCorrect) correctCount++;
+/* ========================================================================== *
+ * QUESTIONS (ADMIN MANAGEMENT)
+ * --------------------------------------------------------------------------
+ * Purpose: CRUD for questions, including bulk import and media.
+ * Touches: Question (incl. optionExplanations, imageUrls/Labels), Test.
+ * Key routes:
+ *   GET  /upload-form                 – Choose test + upload .xlsx
+ *   POST /upload-question             – Parse Excel -> insertMany Questions
+ *   GET  /admin/questions             – List all questions, actions
+ *   GET  /edit-question-detail/:id    – Edit form (choices, per-option expl., votes, images)
+ *   POST /update-question-detail/:id  – Persist edits (text, answers, expl., votes, media)
+ *   POST /delete-question/:id         – Delete a question
+ *   GET  /debug-log/questions         – Dump all questions to server console
+ * Notes: Ensure Question schema includes optionExplanations (array) to persist per-choice text.
+ * ========================================================================== */
 
-      // ✅ Update vote counts
-      if (selected) {
-        const index = ['A', 'B', 'C', 'D'].indexOf(selected);
-        if (index !== -1) {
-          if (!Array.isArray(q.choiceCounts) || q.choiceCounts.length !== 4) {
-            q.choiceCounts = [0, 0, 0, 0];
-          }
-          q.choiceCounts[index]++;
-          await q.save();
-        }
-      }
+app.get('/debug-log/questions', async (req, res) => {
+  try {
+    const questions = await Question.find()
+      .populate('testId', 'title') // get linked test title
+      .lean();
 
-      return {
-        questionId: q._id,
-        selectedAnswer: selected || '',
-        correctAnswer: correct,
-        isCorrect
-      };
-    })
-  );
-
-  const score = Math.round((correctCount / questions.length) * 100);
-
-  const result = new Result({
-    testId,
-    userId: req.session?.userId || null,
-    score,
-    totalQuestions: questions.length,
-    correctAnswers: correctCount,
-    detailedResults
-  });
-
-  await result.save();
-
-  res.send(`
-    <html>
-      <head>
-        <title>Test Submitted</title>
-        <style>
-          body {
-            font-family: Arial, sans-serif;
-            padding: 40px;
-            background: #f4f6f8;
-          }
-          .result-box {
-            background: #fff;
-            padding: 30px;
-            border-radius: 8px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-            max-width: 600px;
-            margin: auto;
-            text-align: center;
-          }
-          h2 {
-            color: #2e7d32;
-          }
-          a {
-            display: inline-block;
-            margin-top: 20px;
-            background: #1a358d;
-            color: white;
-            text-decoration: none;
-            padding: 10px 20px;
-            border-radius: 5px;
-          }
-          a:hover {
-            background: #0d245c;
-          }
-        </style>
-      </head>
-      <body>
-        <div class="result-box">
-          <h2>✅ Test Submitted</h2>
-          <p><strong>Score:</strong> ${score}%</p>
-          <p><strong>Correct Answers:</strong> ${correctCount} / ${questions.length}</p>
-          <a href="/user/analytics">📊 View Analytics</a>
-        </div>
-      </body>
-    </html>
-  `);
-});
-
-// GET /submit-test-final/:testId — styled final result
-app.get('/submit-test-final/:testId', async (req, res) => {
-  const { testId } = req.params;
-  const userId = req.session.userId || null;
-  const userAnswers = req.session.answers || {};
-  const questionTimes = req.session.questionTimes || {};
-  const startTime = req.session.testStartTime || null;
-
-  const test = await Test.findById(testId);
-  const questions = await Question.find({ testId }).sort({ _id: 1 });
-
-  if (!test || questions.length === 0) {
-    return res.send('<h2>Invalid test or no questions found.</h2>');
-  }
-
-  let correctCount = 0;
-  const detailedResults = [];
-
-  for (const question of questions) {
-    const qid = question._id.toString();
-    const selected = userAnswers[`q_${qid}`] || '';
-    const correct = question.correctAnswer || '';
-    const isCorrect = selected === correct;
-    const timeSpent = questionTimes[qid] || 0;
-
-    if (isCorrect) correctCount++;
-
-    detailedResults.push({
-      questionId: question._id,
-      selectedAnswer: selected,
-      correctAnswer: correct,
-      isCorrect,
-      timeSpent
+    console.log("\n===== ALL QUESTIONS IN DATABASE =====");
+    questions.forEach((q, idx) => {
+      console.log(`\n[${idx + 1}] Question ID: ${q._id}`);
+      console.log(`Test Title: ${q.testId ? q.testId.title : 'No Test Linked'}`);
+      console.log(`Question Text: ${q.title}`);
+      console.log(`Choices:`, q.choices);
+      console.log(`Option Explanations:`, q.optionExplanations);
+      console.log(`General Explanation: ${q.explanation || 'None'}`);
+      console.log(`Correct Answer: ${q.correctAnswer}`);
+      console.log(`Choice Counts:`, q.choiceCounts);
+      console.log(`Image URLs:`, q.imageUrls);
+      console.log(`Image Labels:`, q.imageLabels);
     });
-  }
 
-  const totalTime = startTime ? Math.floor((Date.now() - new Date(startTime)) / 1000) : 0;
-
-  const result = new Result({
-    userId,
-    testId,
-    score: Math.round((correctCount / questions.length) * 100),
-    totalQuestions: questions.length,
-    correctAnswers: correctCount,
-    detailedResults,
-    timeTaken: totalTime
-  });
-
-  await result.save();
-  delete req.session.answers;
-  delete req.session.questionTimes;
-  delete req.session.testStartTime;
-
-  const resultRows = questions.map((q, i) => {
-    const r = detailedResults[i];
-    const timeDisplay = `${Math.floor(r.timeSpent / 60)}m ${r.timeSpent % 60}s`;
-    return `
-      <tr style="background:${r.isCorrect ? '#e6f9e6' : '#fde7e7'};">
-        <td>${i + 1}</td>
-        <td>${q.title}</td>
-        <td>${r.selectedAnswer || '—'}</td>
-        <td>${r.correctAnswer}</td>
-        <td>${r.isCorrect ? '✅' : '❌'}</td>
-        <td>${timeDisplay}</td>
-      </tr>
-    `;
-  }).join('');
-
-  res.send(`
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <title>${test.title} — Final Result</title>
-      <style>
-        body { margin: 0; font-family: Arial; background: #f8f9fb; display: flex; }
-        .sidebar {
-          width: 220px; background: #fff; padding: 20px; height: 100vh; border-right: 1px solid #ddd;
-        }
-        .sidebar h2 {
-          font-size: 18px; margin-bottom: 20px; color: #0f1f3e;
-        }
-        .sidebar nav {
-          display: flex; flex-direction: column; gap: 8px;
-        }
-        .sidebar nav .section-title {
-          margin-top: 15px; margin-bottom: 6px;
-          font-size: 13px; font-weight: bold; color: #666;
-          text-transform: uppercase; border-bottom: 1px solid #ddd; padding-bottom: 4px;
-        }
-        .sidebar nav a {
-          text-decoration: none; color: #0f1f3e; font-size: 14px; padding-left: 10px;
-        }
-        .sidebar nav a:hover {
-          text-decoration: underline;
-        }
-        .main {
-          flex: 1; padding: 40px; background: #fff;
-        }
-        h3 {
-          color: #0f1f3e;
-        }
-        table {
-          width: 100%; border-collapse: collapse; background: #fff; margin-top: 20px;
-        }
-        th, td {
-          padding: 10px 12px; text-align: left;
-          border-bottom: 1px solid #e0e0e0; font-size: 14px;
-        }
-        th {
-          background: #f4f4f4;
-        }
-        td a {
-          color: #007bff;
-          text-decoration: none;
-        }
-        td a:hover {
-          text-decoration: underline;
-        }
-        .summary-box {
-          font-size: 16px;
-          background: #f1f4f8;
-          padding: 18px;
-          border-radius: 6px;
-          margin-bottom: 24px;
-          border-left: 4px solid #1a358d;
-        }
-        .btn-back {
-          display: inline-block;
-          background-color: #1a358d;
-          color: white;
-          padding: 10px 22px;
-          font-size: 14px;
-          font-weight: bold;
-          border-radius: 6px;
-          text-decoration: none;
-          margin-top: 24px;
-        }
-        .btn-back:hover {
-          background-color: #122a6d;
-        }
-      </style>
-    </head>
-    <body>
-      <div class="sidebar">
-        <h2>🩻 Radiography</h2>
-        <nav>
-          <div class="section-title">Management</div>
-          <div class="section-title">Analytics</div>
-          
-        </nav>
-      </div>
-
-      <div class="main">
-        <h3>${test.title} — Final Result</h3>
-
-        <div class="summary-box">
-          <div>🎯 <strong>Score:</strong> ${correctCount} / ${questions.length} (${Math.round((correctCount / questions.length) * 100)}%)</div>
-          <div>⏱️ <strong>Total Time:</strong> ${Math.floor(totalTime / 60)} min ${totalTime % 60} sec</div>
-        </div>
-
-        <table>
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>Question</th>
-              <th>Selected</th>
-              <th>Correct</th>
-              <th>✅/❌</th>
-              <th>⏱️ Time</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${resultRows}
-          </tbody>
-        </table>
-
-        <a class="btn-back" href="/test-center">← Back to Test Center</a>
-      </div>
-    </body>
-    </html>
-  `);
-});
-
-
-app.get('/start-test/:testId', async (req, res) => {
-  const { testId } = req.params;
-  const questionIndex = parseInt(req.query.index || '0');
-  const feedbackEnabled = req.query.feedback === 'true';
-  const userAnswer = req.query.selected || null;
-  const userId = req.session.userId;
-
-  if (questionIndex === 0 && !req.session.testStartTime) {
-    req.session.testStartTime = Date.now();
-  }
-  req.session.questionStartTime = Date.now();
-
-  if (userId) {
-    const now = new Date();
-    const user = await User.findById(userId).select('lastSeen');
-    const updates = { lastActive: now };
-    if (!user.lastSeen || now - user.lastSeen > 60 * 1000) updates.lastSeen = now;
-    await User.findByIdAndUpdate(userId, updates);
-  }
-
-  const test = await Test.findById(testId);
-  const questions = await Question.find({ testId }).sort({ _id: 1 });
-  if (!test.isActive || !questions[questionIndex]) {
-    return res.send('<h2>Test not available</h2>');
-  }
-
-  const question = questions[questionIndex];
-  const totalQuestions = questions.length;
-  const correctAnswer = question.correct || null;
-  const totalVotes = question.choiceCounts?.reduce((a, b) => a + b, 0) || 0;
-  const progressPercent = Math.round(((questionIndex + 1) / totalQuestions) * 100);
-
-  if (userId) {
-    await TestProgress.findOneAndUpdate(
-      { userId, testId },
-      {
-        $set: {
-          index: questionIndex,
-          total: totalQuestions,
-          updatedAt: new Date(),
-          status: 'active'
-        }
-      },
-      { upsert: true }
-    );
-  }
-
-  const answerBlock = question.choices?.length ? `
-    <div class="answer-list">
-      ${question.choices.map((choice, i) => {
-        const letter = String.fromCharCode(65 + i);
-        const count = question.choiceCounts?.[i] || 0;
-        const percent = totalVotes > 0 ? Math.round((count / totalVotes) * 100) : 0;
-        const isCorrect = letter === correctAnswer;
-        const isSelected = letter === userAnswer;
-        return `
-          <label class="answer-option ${feedbackEnabled ? (isCorrect ? 'correct-choice' : isSelected ? 'wrong-choice' : '') : ''}">
-            <input type="radio" name="answer" value="${letter}" ${isSelected ? 'checked' : ''} ${feedbackEnabled ? 'disabled' : ''} required />
-            <span>${letter}.</span>
-            <span>${choice}</span>
-            ${feedbackEnabled ? `<span style="margin-left:auto; color:#888;">(${percent}%)</span>` : ''}
-          </label>
-        `;
-      }).join('')}
-    </div>
-  ` : '<p style="color:red;">No choices provided for this question.</p>';
-
-  let section2 = '';
-  const hasImages = question.imageUrls && question.imageUrls.length > 0;
-  if (hasImages) {
-    const mainImgSrc = `/uploads/${question.imageUrls[0]}`;
-    const mainImgLabel = question.imageLabels?.[0] || 'Image A';
-    section2 = `
-      <div class="section-two">
-        <div class="section2-header">Section 2: X-ray Image Viewer</div>
-        <div id="xray-viewer">
-          <div id="main-image-label">${mainImgLabel}</div>
-          <img 
-            id="main-xray-image"
-            src="${mainImgSrc}"
-            alt="${mainImgLabel}"
-            style="max-width:95%; max-height:360px; background:#181818; cursor: zoom-in;"
-          />
-          ${question.imageUrls.length > 1 ? `
-            <div class="xray-thumbs">
-              ${question.imageUrls.map((img, i) => `
-                <img 
-                  src="/uploads/${img}" 
-                  class="thumb-img"
-                  id="thumb-${i}"
-                  alt="${question.imageLabels?.[i] || `Image ${String.fromCharCode(65+i)}`}" />
-              `).join('')}
-            </div>
-          ` : ''}
-        </div>
-      </div>
-    `;
-  } else {
-    section2 = `<div style="visibility:hidden"></div>`;
-  }
-
-  const explanationSection = feedbackEnabled ? `
-    <div class="explanation-rect">
-      <div class="explanation-label">Section 3: Explanation</div>
-      <div>${question.explanation || '<span style="color:#888;">No explanation provided.</span>'}</div>
-    </div>
-  ` : '';
-
-  const gridContent = `
-    <div class="quiz-grid">
-      <div class="main-section">
-        <div class="section-label">Section 1: Question & Answers</div>
-        <div class="question-stem">${question.title}</div>
-        <form action="/submit-question" method="POST">
-          <input type="hidden" name="testId" value="${testId}" />
-          <input type="hidden" name="questionId" value="${question._id}" />
-          <input type="hidden" name="index" value="${questionIndex}" />
-          ${answerBlock}
-          <div class="button-row">
-            ${
-              !feedbackEnabled
-                ? `<button type="submit" class="btn-submit">Submit Answer</button>`
-                : questionIndex + 1 < totalQuestions
-                  ? `<a href="/start-test/${testId}?index=${questionIndex + 1}" class="btn-submit">Next Question</a>`
-                  : `<a href="/submit-test-final/${testId}" class="btn-submit">Finish Test</a>`
-            }
-          </div>
-        </form>
-      </div>
-      ${section2}
-    </div>
-  `;
-
-  const pageHtml = `
-    <!DOCTYPE html>
-    <html>
-      <head>
-        <meta charset="UTF-8">
-        <title>${test.title}</title>
-        <style>
-          body { font-family: 'Segoe UI', sans-serif; margin: 0; padding: 0; background: #fff; }
-          .progress-uber { width: 100%; max-width: 900px; margin: 22px auto; height: 16px; background: #e0e6ef; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 12px #0001; }
-          .progress-uber-fill { width: ${progressPercent}%; height: 100%; background: #28a745; transition: width 0.5s ease-in-out; }
-          .progress-uber-label { text-align: center; font-size: 15px; font-weight: bold; margin-top: 10px; color: #222; }
-          .topbar, .topbar.bottom { background: #1a358d; color: #fff; padding: 12px 28px; font-size: 17px; font-weight: 500; text-align: center; }
-          .topbar.bottom { position: fixed; bottom: 0; left: 0; right: 0; z-index: 100; }
-          .quiz-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; padding: 30px 40px 0 40px; }
-          .main-section { background: #fff; border-radius: 14px; box-shadow: 0 1px 5px rgba(0,0,0,0.06); padding: 20px; }
-          .section-two {
-            background: #000;
-            color: #fff;
-            border-radius: 14px;
-            box-shadow: 0 1px 5px rgba(0,0,0,0.3);
-            padding: 20px;
-            overflow: hidden;
-            max-width: 100%;
-          }
-          .section2-header {
-            font-weight: 700;
-            font-size: 17px;
-            color: #fff;
-            background: #111;
-            padding: 10px 18px;
-            border-radius: 8px;
-            margin-bottom: 15px;
-            text-align: center;
-          }
-          #main-image-label {
-            color: #fff;
-            text-align: center;
-            margin-bottom: 10px;
-          }
-          #xray-viewer {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-          }
-          .question-stem { font-size: 17px; font-weight: 500; margin-bottom: 24px; color: #263343; }
-          .answer-list { display: flex; flex-direction: column; gap: 16px; margin-top: 10px; }
-          .answer-option { display: flex; align-items: center; gap: 11px; font-size: 15px; }
-          .answer-option input[type='radio'] { width: 1.1em; height: 1.1em; border: 1.5px solid #aaa; border-radius: 50%; margin-right: 8px; cursor: pointer; }
-          .correct-choice { background-color: #e6f4ea; border-left: 4px solid #28a745; padding-left: 8px; }
-          .wrong-choice { background-color: #fbeaea; border-left: 4px solid #e53935; padding-left: 8px; }
-          .button-row { margin-top: 20px; }
-          .btn-submit { padding: 10px 22px; background: #1a358d; color: #fff; font-weight: bold; border: none; border-radius: 6px; cursor: pointer; }
-          .btn-submit:hover { background: #16306f; }
-          .explanation-rect { padding: 30px; margin-top: 30px; background: #f9f9f9; border-top: 1px solid #ddd; }
-          .explanation-label { font-weight: bold; margin-bottom: 10px; font-size: 18px; }
-
-          .xray-thumbs {
-            display: flex;
-            flex-wrap: nowrap;
-            overflow-x: auto;
-            gap: 8px;
-            padding-top: 12px;
-            max-width: 100%;
-            border-top: 1px solid #666;
-            margin-top: 16px;
-          }
-
-          .thumb-img {
-            height: 80px;
-            object-fit: cover;
-            border: 2px solid #ccc;
-            border-radius: 6px;
-            cursor: pointer;
-            flex-shrink: 0;
-            background: #fff;
-          }
-
-          .timer-bar {
-            text-align: center;
-            font-size: 15px;
-            margin-top: 8px;
-            color: #444;
-          }
-        </style>
-      </head>
-      <body>
-        <div class="topbar">Item ${questionIndex + 1} of ${totalQuestions}</div>
-        <div class="progress-uber-label">Progress: Question ${questionIndex + 1} of ${totalQuestions}</div>
-        <div class="progress-uber">
-          <div class="progress-uber-fill"></div>
-        </div>
-        <div class="timer-bar">
-          ⏱️ <span id="test-timer">Loading test time...</span> | 🕒 <span id="question-timer">Loading question time...</span>
-        </div>
-        ${gridContent}
-        ${explanationSection}
-        <div class="topbar bottom">Item ${questionIndex + 1} of ${totalQuestions}</div>
-
-        <script>
-          const testStart = ${req.session.testStartTime || Date.now()};
-          const questionStart = ${Date.now()};
-
-          function formatTime(seconds) {
-            const mins = Math.floor(seconds / 60);
-            const secs = seconds % 60;
-            return mins + 'm ' + secs + 's';
-          }
-
-          function updateTimers() {
-            const now = Date.now();
-            const testElapsed = Math.floor((now - testStart) / 1000);
-            const questionElapsed = Math.floor((now - questionStart) / 1000);
-            document.getElementById('test-timer').textContent = formatTime(testElapsed);
-            document.getElementById('question-timer').textContent = formatTime(questionElapsed);
-          }
-
-          setInterval(updateTimers, 1000);
-        </script>
-      </body>
-    </html>
-  `;
-
-  res.send(pageHtml);
-});
-
-
-
-app.post('/submit-question', async (req, res) => {
-  const { testId, questionId, index, answer } = req.body;
-  const currentIndex = parseInt(index, 10);
-  const userId = req.session.userId;
-
-  // Save answer in session
-  if (!req.session.answers) req.session.answers = {};
-  req.session.answers[`q_${questionId}`] = answer;
-
-  try {
-    // Update vote counts
-    const question = await Question.findById(questionId);
-    const answerIdx = answer.charCodeAt(0) - 65;
-
-    if (!Array.isArray(question.choiceCounts) || question.choiceCounts.length !== question.choices.length) {
-      question.choiceCounts = Array(question.choices.length).fill(0);
-    }
-
-    question.choiceCounts[answerIdx]++;
-    await question.save();
-
-    // ⏱️ Track time spent on question
-    const now = Date.now();
-    const questionStart = req.session.questionStartTime || now;
-    const testStart = req.session.testStartTime || now;
-    const timeSpent = Math.floor((now - questionStart) / 1000);
-    const totalTime = Math.floor((now - testStart) / 1000);
-
-    // 🔴 FIX: Save time spent per question
-    if (!req.session.questionTimes) req.session.questionTimes = {};
-    req.session.questionTimes[questionId] = timeSpent;
-
-    console.log(`⏱️ Time spent on question ${questionId}: ${timeSpent} seconds`);
-    console.log(`⏱️ Total test time so far: ${totalTime} seconds`);
-
-    // 👤 Update user activity timestamps
-    if (userId) {
-      const user = await User.findById(userId).select('lastSeen');
-      const updates = { lastActive: new Date() };
-      if (!user.lastSeen || new Date() - user.lastSeen > 60 * 1000) updates.lastSeen = new Date();
-      await User.findByIdAndUpdate(userId, updates);
-
-      const totalQuestions = await Question.countDocuments({ testId });
-      await TestProgress.findOneAndUpdate(
-        { userId, testId },
-        {
-          $set: {
-            index: currentIndex,
-            total: totalQuestions,
-            updatedAt: new Date(),
-            status: 'active'
-          }
-        },
-        { upsert: true }
-      );
-    }
+    res.send("✅ All questions have been logged to the terminal.");
   } catch (err) {
-    console.error('❌ Error processing submission:', err);
-  }
-
-  // Redirect
-  const totalQuestions = await Question.countDocuments({ testId });
-  if (currentIndex + 1 >= totalQuestions) {
-    return res.redirect(`/submit-test-final/${testId}`);
-  }
-
-  return res.redirect(`/start-test/${testId}?index=${index}&selected=${answer}&feedback=true`);
-});
-
-
-// ✅ Middleware to ensure user is logged in
-function requireLogin(req, res, next) {
-  if (!req.session.userId) {
-    console.log('🔒 No session found — redirecting to /login');
-    return res.redirect('/login');
-  }
-  console.log('✅ User session:', req.session.userId);
-  next();
-}
-
-
-app.get('/test-center', requireLogin, async (req, res) => {
-  const userName = req.session.userName || 'User';
-  const tests = await Test.find().sort({ createdAt: -1 });
-  const now = new Date();
-
-  function formatRemainingTime(createdAt, limitMinutes) {
-    const end = new Date(createdAt.getTime() + (limitMinutes || 60) * 60000);
-    const ms = end - now;
-    if (ms <= 0) return '⏳ expired';
-
-    const mins = Math.floor(ms / 60000);
-    const hrs = Math.floor(mins / 60);
-    const days = Math.floor(hrs / 24);
-    const remaining = [];
-
-    if (days > 0) remaining.push(`${days}d`);
-    if (hrs % 24 > 0) remaining.push(`${hrs % 24}h`);
-    if (mins % 60 > 0) remaining.push(`${mins % 60}m`);
-
-    return `⏳ ${remaining.join(' ')} left`;
-  }
-
-  const rows = tests.map(t => {
-    const percentage = Math.floor(Math.random() * 100);
-    const remaining = formatRemainingTime(t.createdAt, t.timeLimit);
-    const isActive = t.isActive !== false;
-
-    return `
-      <tr>
-        <td>
-          <strong>${t.title}</strong><br>
-          <span class="desc">${t.description || '— No description —'}</span>
-        </td>
-        <td>${t.createdAt.toISOString().split('T')[0]}</td>
-        <td>—</td>
-        <td>
-          <div class="progress-bar">
-            <div class="progress-fill" style="width: ${percentage}%;"></div>
-          </div>
-          <div class="small-text">${percentage}% used · ${remaining}</div>
-        </td>
-        <td style="text-align: right;">
-          <form action="/start-test/${t._id}" method="GET">
-            <button title="${isActive ? 'Start Test' : 'Disabled by Admin'}"
-              class="start-btn" ${!isActive ? 'disabled style="opacity: 0.5; cursor: not-allowed;"' : ''}>
-              ▶️ ${isActive ? 'Start' : 'Locked'}
-            </button>
-          </form>
-        </td>
-      </tr>
-    `;
-  }).join('');
-
-  res.send(`
-<!DOCTYPE html>
-<html>
-<head>
-  <title>Radiography Assistant – Test Center</title>
-  <style>
-    body { margin: 0; font-family: Arial, sans-serif; display: flex; background: #f8f9fb; }
-    .sidebar {
-      width: 220px; background: #ffffff; padding: 20px; height: 100vh;
-      display: flex; flex-direction: column; justify-content: space-between;
-      border-right: 1px solid #ddd;
-    }
-    .sidebar h2 { font-size: 18px; color: #0f1f3e; margin-bottom: 20px; }
-    .logout-form { margin-top: auto; }
-    .logout-form button {
-      background: #d9534f; color: white; border: none; border-radius: 6px;
-      padding: 8px 16px; font-weight: bold; cursor: pointer;
-    }
-    .logout-form button:hover { background: #c9302c; }
-
-    .main {
-      flex: 1; padding: 40px; background: #ffffff; position: relative;
-    }
-    .user-info {
-      position: absolute; top: 20px; right: 30px;
-      font-size: 14px; color: #0f1f3e; font-weight: bold;
-    }
-    .card {
-      background: #0f1f3e; color: white; padding: 20px;
-      border-radius: 12px; margin-bottom: 30px;
-    }
-    h2 { margin-bottom: 20px; color: #0f1f3e; }
-    table {
-      width: 100%; border-collapse: collapse; background: #fff;
-      border-radius: 10px; overflow: hidden;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.05);
-    }
-    th, td {
-      padding: 14px 16px; text-align: left; border-bottom: 1px solid #f0f0f0;
-      vertical-align: top; font-size: 14px;
-    }
-    th {
-      background: #f8fafc; color: #333;
-      text-transform: uppercase; font-size: 12px;
-    }
-    tr:hover { background-color: #f9fbff; }
-    .progress-bar {
-      width: 100px; background: #e0e0e0;
-      border-radius: 4px; overflow: hidden;
-    }
-    .progress-fill { height: 10px; background: #007bff; }
-    .small-text { font-size: 11px; color: #555; }
-    .start-btn {
-      background: #007bff; border: none;
-      font-size: 14px; padding: 6px 12px;
-      border-radius: 6px; color: white; cursor: pointer; font-weight: bold;
-    }
-    .start-btn:hover { background: #0056b3; }
-    .desc { font-size: 12px; color: #777; }
-
-    @media (max-width: 768px) {
-      .main { padding: 20px; }
-      table, thead, tbody, th, td, tr { display: block; }
-      th, td { padding: 10px; }
-    }
-  </style>
-</head>
-<body>
-  <div class="sidebar">
-    <div>
-      <h2>🩻 Radiography</h2>
-    </div>
-    <form class="logout-form" action="/logout" method="POST">
-      <button type="submit">🚪 Logout</button>
-    </form>
-  </div>
-
-  <div class="main">
-    <div class="user-info">👤 ${userName}</div>
-    <div class="card">
-      <h3>Welcome to the Weekly Radiography Exam Center</h3>
-      <p>
-        ✅ Practice tests based on clinical imaging routines<br>
-        ✅ Reinforce your anatomy, positioning, and critique skills<br>
-        ✅ Monitor your performance and improve each week
-      </p>
-    </div>
-
-    <h2>📋 Available Tests</h2>
-    <table>
-      <thead>
-        <tr>
-          <th>Test</th>
-          <th>Date</th>
-          <th>Positioning</th>
-          <th>Technique</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        ${rows}
-      </tbody>
-    </table>
-  </div>
-</body>
-</html>
-  `);
-});
-
-
-app.get('/admin/tests', async (req, res) => {
-  console.log('📥 GET /admin/tests - Admin viewing test list');
-
-  const tests = await Test.find().sort({ createdAt: -1 });
-
-  const rows = tests.map(t => `
-    <tr>
-      <td>
-        <strong>${t.title}</strong><br>
-        <span style="font-size: 12px; color: #777;">${t.description || 'No description'}</span>
-      </td>
-      <td>
-        ${new Date(t.createdAt).toISOString().split('T')[0]}<br>
-        <span style="font-size: 11px; color: #666;">
-          🗓 ${t.startDate ? new Date(t.startDate).toLocaleString() : '—'} → 
-          ${t.endDate ? new Date(t.endDate).toLocaleString() : '∞'}
-        </span>
-      </td>
-      <td>${t.category || '—'}</td>
-      <td>
-        <div style="width: 100px; background: #e0e0e0; border-radius: 4px; overflow: hidden;">
-          <div style="width: ${t.timeLimit || 60}%; background: #007bff; height: 10px;"></div>
-        </div>
-        <div style="font-size: 11px; color: #555;">
-          ${t.timeLimit || 60}% duration
-        </div>
-      </td>
-      <td style="text-align: right;">
-        <form action="/admin/toggle-test/${t._id}" method="POST" style="display:inline; margin-right: 10px;">
-          <label style="position: relative; display: inline-block; width: 46px; height: 24px;">
-            <input type="checkbox" name="toggle" onchange="this.form.submit()" ${t.isActive ? 'checked' : ''} style="opacity:0;width:0;height:0;">
-            <span style="position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: ${t.isActive ? '#28a745' : '#ccc'}; border-radius: 24px; transition: .4s;">
-              <span style="position: absolute; content: ''; height: 18px; width: 18px; left: ${t.isActive ? '24px' : '4px'}; bottom: 3px; background-color: white; border-radius: 50%; transition: .4s;"></span>
-            </span>
-          </label>
-        </form>
-        <form action="/admin/update-access/${t._id}" method="POST" onsubmit="return validateForm(this)" style="display:inline-block;">
-          <select name="accessType" onchange="handleAccessChange(this)" style="font-size: 13px; padding: 3px 6px;">
-            <option value="infinite" ${t.isOpenAccess ? 'selected' : ''}>Infinite</option>
-            <option value="limited" ${!t.isOpenAccess ? 'selected' : ''}>Limited</option>
-          </select>
-          <input type="number" name="maxUsers" value="${t.maxUsers || 0}" placeholder="Max users"
-            style="width: 60px; padding: 3px 5px; font-size: 13px; margin-left: 5px;"
-            ${t.isOpenAccess ? 'disabled' : ''}>
-          <button type="submit" style="font-size: 12px; padding: 4px 8px; margin-left: 5px;">Update</button>
-        </form>
-      </td>
-    </tr>
-  `).join('');
-
-  res.send(`
-<!DOCTYPE html>
-<html>
-<head>
-  <title>Radiography Assistant – Tests</title>
-  <style>
-    body {
-      margin: 0;
-      font-family: Arial, sans-serif;
-      display: flex;
-      background: #f8f9fb;
-    }
-    .sidebar {
-      width: 220px;
-      background: #ffffff;
-      padding: 20px;
-      height: 100vh;
-      border-right: 1px solid #ddd;
-    }
-    .sidebar h2 {
-      font-size: 18px;
-      margin-bottom: 20px;
-      color: #0f1f3e;
-    }
-    .sidebar nav {
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-    }
-    .sidebar nav a {
-      text-decoration: none;
-      color: #0f1f3e;
-      font-size: 14px;
-    }
-    .sidebar nav a:hover {
-      text-decoration: underline;
-    }
-    .main {
-      flex: 1;
-      padding: 40px;
-      background: #ffffff;
-    }
-    .card {
-      background: #0f1f3e;
-      color: white;
-      padding: 20px;
-      border-radius: 12px;
-      margin-bottom: 30px;
-    }
-    .card h3 {
-      margin-top: 0;
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-top: 20px;
-    }
-    th, td {
-      padding: 12px 10px;
-      text-align: left;
-      border-bottom: 1px solid #e0e0e0;
-      vertical-align: top;
-      font-size: 14px;
-    }
-    th {
-      background: #f4f4f4;
-    }
-    button:hover {
-      color: #0056b3;
-    }
-  </style>
-  <script>
-    function handleAccessChange(select) {
-      const input = select.form.querySelector('input[name="maxUsers"]');
-      input.disabled = (select.value === 'infinite');
-    }
-    function validateForm(form) {
-      const type = form.accessType.value;
-      const max = form.maxUsers.value;
-      if (type === 'limited' && (!max || max <= 0)) {
-        alert('Please enter a valid number of users.');
-        return false;
-      }
-      return true;
-    }
-  </script>
-</head>
-<body>
-  <div class="sidebar">
-    <h2>🩻 Radiography</h2>
-    <nav>
-      <a href="/admin/tests">📋 Manage Tests</a>
-      <a href="/admin/create-test">➕ Create Test</a>
-      <a href="/admin/questions">🧠 Manage Questions</a>
-      <a href="/upload-form">📤 Upload Excel</a>
-    </nav>
-  </div>
-  <div class="main">
-    <div class="card">
-      <h3>Welcome to the Weekly Radiography Exam Center</h3>
-      <p>
-        ✅ Manage test availability window<br>
-        ✅ Limit student access count or keep open<br>
-        ✅ Toggle test on/off visibility
-      </p>
-    </div>
-    <h2>Admin – Manage Test Access</h2>
-    <table>
-      <thead>
-        <tr>
-          <th>Test</th>
-          <th>Date / Window</th>
-          <th>Category</th>
-          <th>Settings</th>
-          <th>Access</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${rows}
-      </tbody>
-    </table>
-  </div>
-</body>
-</html>
-  `);
-});
-
-
-
-
-// ✅ Enhanced POST: Update access settings for a test (Infinite or Limited)
-app.post('/admin/update-access/:id', async (req, res) => {
-  const { id } = req.params;
-  const { accessType, maxUsers } = req.body;
-
-  try {
-    const test = await Test.findById(id);
-    if (!test) {
-      console.warn(`⚠️ Test not found: ${id}`);
-      return res.status(404).send('Test not found');
-    }
-
-    if (accessType === 'infinite') {
-      test.isOpenAccess = true;
-      test.maxUsers = 0;
-      console.log(`🔁 Updated: Test "${test.title}" set to Infinite Access`);
-    } else if (accessType === 'limited') {
-      const parsedUsers = parseInt(maxUsers, 10);
-      if (isNaN(parsedUsers) || parsedUsers < 1) {
-        console.warn(`⚠️ Invalid maxUsers: "${maxUsers}"`);
-        return res.status(400).send('Please enter a valid number of users.');
-      }
-      test.isOpenAccess = false;
-      test.maxUsers = parsedUsers;
-      console.log(`🔁 Updated: Test "${test.title}" limited to ${parsedUsers} users`);
-    } else {
-      console.warn(`⚠️ Invalid accessType: "${accessType}"`);
-      return res.status(400).send('Invalid access type.');
-    }
-
-    await test.save();
-    res.redirect('/admin/tests');
-  } catch (err) {
-    console.error('❌ Failed to update test access settings:', err);
-    res.status(500).send('Internal server error');
+    console.error("❌ Error fetching questions:", err);
+    res.status(500).send("Error fetching questions");
   }
 });
 
 
-
-app.post('/admin/toggle-test/:id', async (req, res) => {
-  const testId = req.params.id;
-  console.log(`📥 Received POST to toggle test with ID: ${testId}`);
-
-  try {
-    const test = await Test.findById(testId);
-    if (!test) {
-      console.log(`❌ No test found for ID: ${testId}`);
-      return res.status(404).send('❌ Test not found');
-    }
-
-    const originalStatus = test.isActive;
-    test.isActive = !test.isActive;
-    test.updatedAt = new Date();
-
-    await test.save();
-
-    console.log(`🔁 Test "${test.title}" (ID: ${testId}) toggled from ${originalStatus ? '✅ Active' : '🚫 Blocked'} → ${test.isActive ? '✅ Active' : '🚫 Blocked'}`);
-    console.log(`🕒 Updated at: ${test.updatedAt.toISOString()}`);
-
-    res.redirect('/admin/tests');
-  } catch (err) {
-    console.error('❌ Error toggling test access:', err);
-    res.status(500).send('Internal Server Error');
-  }
-});
-
-
-app.get('/admin/create-test', (req, res) => {
-  res.send(`
-<!DOCTYPE html>
-<html>
-<head>
-  <title>Create New Test</title>
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      background: #f8f9fb;
-      margin: 0;
-      display: flex;
-    }
-
-    .sidebar {
-      width: 220px;
-      background: #ffffff;
-      padding: 20px;
-      height: 100vh;
-      border-right: 1px solid #ddd;
-    }
-
-    .sidebar h2 {
-      font-size: 18px;
-      color: #0f1f3e;
-      margin-bottom: 20px;
-    }
-
-    .sidebar nav {
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-    }
-
-    .sidebar nav a {
-      text-decoration: none;
-      color: #0f1f3e;
-      font-size: 14px;
-    }
-
-    .sidebar nav a:hover {
-      text-decoration: underline;
-    }
-
-    .main {
-      flex: 1;
-      padding: 40px;
-      background: #ffffff;
-    }
-
-    .card {
-      background: #0f1f3e;
-      color: white;
-      padding: 20px;
-      border-radius: 12px;
-      margin-bottom: 30px;
-    }
-
-    h3 {
-      margin-top: 0;
-    }
-
-    form {
-      background: #fff;
-      padding: 30px;
-      border-radius: 8px;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.05);
-      max-width: 550px;
-    }
-
-    label {
-      font-weight: bold;
-      color: #333;
-      display: block;
-      margin-top: 15px;
-    }
-
-    input, textarea, select {
-      width: 100%;
-      padding: 10px;
-      font-size: 14px;
-      margin-top: 8px;
-      border: 1px solid #ccc;
-      border-radius: 6px;
-    }
-
-    button {
-      margin-top: 20px;
-      padding: 10px 20px;
-      font-size: 14px;
-      background: #007bff;
-      color: white;
-      border: none;
-      border-radius: 6px;
-      font-weight: bold;
-      cursor: pointer;
-    }
-
-    button:hover {
-      background: #0056b3;
-    }
-  </style>
-</head>
-<body>
-  <div class="sidebar">
-    <h2>🩻 Radiography</h2>
-    <nav>
-      <a href="/admin/tests">📋 Manage Tests</a>
-      <a href="/admin/create-test">➕ Create Test</a>
-      <a href="/admin/questions">🧠 Manage Questions</a>
-      <a href="/upload-form">📤 Upload Excel</a>
-    </nav>
-  </div>
-
-  <div class="main">
-    <div class="card">
-      <h3>➕ Create New Test</h3>
-      <form method="POST" action="/admin/create-test">
-        <label>Test Title:</label>
-        <input type="text" name="title" required />
-
-        <label>Description:</label>
-        <textarea name="description" rows="3"></textarea>
-
-        <label>Time Limit (minutes):</label>
-        <input type="number" name="timeLimit" min="1" />
-
-        <label>Start Date (optional):</label>
-        <input type="datetime-local" name="startDate" />
-
-        <label>End Date (optional):</label>
-        <input type="datetime-local" name="endDate" />
-
-        <label>Max Users Allowed:</label>
-        <input type="number" name="maxUsers" min="0" placeholder="0 = unlimited" />
-
-        <label>Open Access (ignore max user limit):</label>
-        <select name="isOpenAccess">
-          <option value="true" selected>Yes</option>
-          <option value="false">No</option>
-        </select>
-
-        <button type="submit">✅ Create Test</button>
-      </form>
-    </div>
-  </div>
-</body>
-</html>
-  `);
-});
-
-
-
-app.post('/admin/create-test', async (req, res) => {
-  const { title, description, timeLimit } = req.body;
-
-  const newTest = new Test({
-    title,
-    description,
-    timeLimit: Number(timeLimit)
-  });
-
-  await newTest.save();
-
-  res.send(`
-<!DOCTYPE html>
-<html>
-<head>
-  <title>Test Created</title>
-  <style>
-    body { font-family: Arial; background: #f8f9fb; margin: 0; display: flex; }
-    .sidebar { width: 220px; background: #fff; padding: 20px; height: 100vh; border-right: 1px solid #ddd; }
-    .main { flex: 1; padding: 40px; background: #fff; }
-    .card { background: #0f1f3e; color: #fff; padding: 20px; border-radius: 12px; }
-    a {
-      display: inline-block; margin-top: 20px;
-      padding: 10px 20px; background: #007bff;
-      color: white; text-decoration: none; border-radius: 6px;
-    }
-    a:hover { background: #0056b3; }
-  </style>
-</head>
-<body>
-  <div class="sidebar"><h2>🩻 Radiography</h2></div>
-  <div class="main">
-    <div class="card">
-      <h3>✅ Test Created</h3>
-      <p><strong>${title}</strong> has been successfully added.</p>
-      <a href="/admin/create-test">➕ Create Another</a>
-      <a href="/admin/questions" style="margin-left: 10px;">⬅ Back to Questions</a>
-    </div>
-  </div>
-</body>
-</html>
-  `);
-});
-
-
-
-app.get('/admin/users', async (req, res) => {
-  const users = await User.find().sort({ createdAt: -1 });
-
-  const rows = users.map(user => `
-    <tr>
-      <td>
-        <strong>${user.name}</strong><br>
-        <span style="font-size: 12px; color: #777;">${user.email}</span>
-      </td>
-      <td>${new Date(user.createdAt).toISOString().split('T')[0]}</td>
-      <td style="color: ${user.isActive ? '#28a745' : '#dc3545'};">
-        ${user.isActive ? '✔️ Active' : '🚫 Inactive'}
-      </td>
-      <td style="text-align:right;">
-        <form action="/admin/toggle-user/${user._id}" method="POST" style="display:inline;">
-          <button class="btn-toggle" type="submit">${user.isActive ? 'Disable' : 'Enable'}</button>
-        </form>
-        <form action="/admin/delete-user/${user._id}" method="POST" style="display:inline;" onsubmit="return confirm('Delete this user?');">
-          <button class="btn-delete" type="submit">🗑️</button>
-        </form>
-      </td>
-    </tr>
-  `).join('');
-
-  res.send(`
-<!DOCTYPE html>
-<html>
-<head>
-  <title>Radiography Assistant – Manage Users</title>
-  <style>
-    body {
-      margin: 0;
-      font-family: Arial, sans-serif;
-      background: #f8f9fb;
-      display: flex;
-    }
-
-    .sidebar {
-      width: 220px;
-      background: #ffffff;
-      padding: 20px;
-      height: 100vh;
-      border-right: 1px solid #ddd;
-    }
-
-    .sidebar h2 {
-      font-size: 18px;
-      color: #0f1f3e;
-      margin-bottom: 20px;
-    }
-
-    .sidebar nav {
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-    }
-
-    .sidebar nav a {
-      text-decoration: none;
-      color: #0f1f3e;
-      font-size: 14px;
-    }
-
-    .sidebar nav a:hover {
-      text-decoration: underline;
-    }
-
-    .main {
-      flex: 1;
-      padding: 40px;
-      background: #ffffff;
-    }
-
-    .card {
-      background: #0f1f3e;
-      color: white;
-      padding: 20px;
-      border-radius: 12px;
-      margin-bottom: 30px;
-    }
-
-    h2 {
-      color: #0f1f3e;
-      margin-top: 0;
-    }
-
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      background: #fff;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.05);
-    }
-
-    th, td {
-      padding: 12px 14px;
-      font-size: 14px;
-      border-bottom: 1px solid #eee;
-      text-align: left;
-    }
-
-    th {
-      background: #f4f4f4;
-      text-transform: uppercase;
-      font-size: 12px;
-    }
-
-    .btn-toggle {
-      padding: 5px 10px;
-      background: #ffc107;
-      color: black;
-      border: none;
-      border-radius: 4px;
-      cursor: pointer;
-      margin-right: 6px;
-    }
-
-    .btn-delete {
-      padding: 5px 10px;
-      background: #dc3545;
-      color: white;
-      border: none;
-      border-radius: 4px;
-      cursor: pointer;
-    }
-
-    .btn-toggle:hover { background: #e0a800; }
-    .btn-delete:hover { background: #c82333; }
-  </style>
-</head>
-<body>
-  <div class="sidebar">
-    <h2>🩻 Radiography</h2>
-    <nav>
-      <a href="/admin/tests">📋 Manage Tests</a>
-      <a href="/admin/create-test">➕ Create Test</a>
-      <a href="/admin/questions">🧠 Manage Questions</a>
-      <a href="/upload-form">📤 Upload Excel</a>
-      <a href="/admin/users">👥 Manage Users</a>
-    </nav>
-  </div>
-
-  <div class="main">
-    <div class="card">
-      <h3>👥 User Management Panel</h3>
-      <p>
-        ✅ View all registered users<br>
-        ✅ Toggle active status or permanently delete accounts
-      </p>
-    </div>
-
-    <h2>Registered Users</h2>
-    <table>
-      <thead>
-        <tr>
-          <th>User</th>
-          <th>Joined</th>
-          <th>Status</th>
-          <th>Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${rows}
-      </tbody>
-    </table>
-  </div>
-</body>
-</html>
-  `);
-});
-
-
-
-app.post('/admin/toggle-user/:id', async (req, res) => {
-  const user = await User.findById(req.params.id);
-  if (!user) return res.status(404).send('User not found');
-
-  user.isActive = !user.isActive;
-  await user.save();
-
-  res.redirect('/admin/users');
-});
-
-
-
-
-
-
-
-
-
-
-//////question managment code ////////////
 app.get('/upload-form', async (req, res) => {
   const tests = await Test.find().sort({ title: 1 });
 
@@ -2029,8 +620,6 @@ app.get('/upload-form', async (req, res) => {
 </html>`);
 });
 
-
-
 app.post('/upload-question', upload.single('xlsxFile'), async (req, res) => {
   const { testId } = req.body;
   const workbook = xlsx.readFile(req.file.path);
@@ -2058,74 +647,6 @@ app.post('/upload-question', upload.single('xlsxFile'), async (req, res) => {
 
 
 
-
-// ✅ 5️⃣ Delete Question
-app.post('/delete-question/:id', async (req, res) => {
-  await Question.findByIdAndDelete(req.params.id);
-
-  res.send(`
-<!DOCTYPE html>
-<html>
-<head>
-  <title>Question Deleted</title>
-  <style>
-    body {
-      margin: 0;
-      font-family: Arial, sans-serif;
-      display: flex;
-      background: #f8f9fb;
-    }
-    .sidebar {
-      width: 220px;
-      background: #ffffff;
-      padding: 20px;
-      height: 100vh;
-      border-right: 1px solid #ddd;
-    }
-    .main {
-      flex: 1;
-      padding: 40px;
-      background: #ffffff;
-    }
-    .card {
-      background: #0f1f3e;
-      color: white;
-      padding: 20px;
-      border-radius: 12px;
-      margin-bottom: 30px;
-    }
-    .card h3 {
-      margin-top: 0;
-    }
-    a {
-      display: inline-block;
-      margin-top: 20px;
-      padding: 10px 20px;
-      background: #dc3545;
-      color: white;
-      text-decoration: none;
-      border-radius: 6px;
-    }
-    a:hover {
-      background: #a71d2a;
-    }
-  </style>
-</head>
-<body>
-  <div class="sidebar">
-    <h2>🩻 Radiography</h2>
-  </div>
-  <div class="main">
-    <div class="card">
-      <h3>🗑️ Question Deleted</h3>
-      <p>The question has been permanently removed from the system.</p>
-      <a href="/admin/questions">⬅️ Back to Question List</a>
-    </div>
-  </div>
-</body>
-</html>
-  `);
-});
 
 app.get('/admin/questions', async (req, res) => {
   const questions = await Question.find().populate('testId').sort({ createdAt: -1 });
@@ -2443,45 +964,152 @@ app.post('/update-question-detail/:id', uploadMultiple, async (req, res) => {
 });
 
 
-// ✅ Route: /admin/dashboard – main admin dashboard
-app.get('/admin/dashboard', async (req, res) => {
-  const [userCount, testCount, questionCount] = await Promise.all([
-    User.countDocuments(),
-    Test.countDocuments(),
-    Question.countDocuments(),
-  ]);
-
-  const results = await Result.find().populate('userId');
-  const attemptCount = results.length;
-  const totalScore = results.reduce((sum, r) => sum + r.score, 0);
-  const averageScore = attemptCount ? (totalScore / attemptCount).toFixed(1) : 'N/A';
-
-  const userScores = {};
-  results.forEach(r => {
-    const name = r.userId?.name || 'Unknown';
-    if (!userScores[name]) userScores[name] = { total: 0, count: 0 };
-    userScores[name].total += r.score;
-    userScores[name].count++;
-  });
-
-  const topUsers = Object.entries(userScores)
-    .map(([name, data]) => ({ name, avg: (data.total / data.count).toFixed(1) }))
-    .sort((a, b) => b.avg - a.avg)
-    .slice(0, 5);
-
-  const topList = topUsers.map(u => `<li>${u.name}: ${u.avg}</li>`).join('');
+app.post('/delete-question/:id', async (req, res) => {
+  await Question.findByIdAndDelete(req.params.id);
 
   res.send(`
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Admin Dashboard</title>
+  <title>Question Deleted</title>
   <style>
     body {
       margin: 0;
       font-family: Arial, sans-serif;
-      background: #f8f9fb;
       display: flex;
+      background: #f8f9fb;
+    }
+    .sidebar {
+      width: 220px;
+      background: #ffffff;
+      padding: 20px;
+      height: 100vh;
+      border-right: 1px solid #ddd;
+    }
+    .main {
+      flex: 1;
+      padding: 40px;
+      background: #ffffff;
+    }
+    .card {
+      background: #0f1f3e;
+      color: white;
+      padding: 20px;
+      border-radius: 12px;
+      margin-bottom: 30px;
+    }
+    .card h3 {
+      margin-top: 0;
+    }
+    a {
+      display: inline-block;
+      margin-top: 20px;
+      padding: 10px 20px;
+      background: #dc3545;
+      color: white;
+      text-decoration: none;
+      border-radius: 6px;
+    }
+    a:hover {
+      background: #a71d2a;
+    }
+  </style>
+</head>
+<body>
+  <div class="sidebar">
+    <h2>🩻 Radiography</h2>
+  </div>
+  <div class="main">
+    <div class="card">
+      <h3>🗑️ Question Deleted</h3>
+      <p>The question has been permanently removed from the system.</p>
+      <a href="/admin/questions">⬅️ Back to Question List</a>
+    </div>
+  </div>
+</body>
+</html>
+  `);
+});
+
+
+
+/* ========================================================================== *
+ * ADMIN – TEST SETTINGS & ACCESS
+ * --------------------------------------------------------------------------
+ * Purpose: Create tests and control visibility/limits/windows.
+ * Touches: Test (isActive, isOpenAccess, maxUsers, timeLimit, window).
+ * Key routes:
+ *   GET  /admin/tests               – Manage tests table (toggle, limits)
+ *   POST /admin/update-access/:id   – Infinite vs limited access + maxUsers
+ *   POST /admin/toggle-test/:id     – Enable/disable a test
+ *   GET  /admin/create-test         – New test form
+ *   POST /admin/create-test         – Create test document
+ * Notes: UI shows start/end window and timeLimit as a “progress” visualization.
+ * ========================================================================== */
+
+
+
+app.get('/admin/tests', async (req, res) => {
+  console.log('📥 GET /admin/tests - Admin viewing test list');
+
+  const tests = await Test.find().sort({ createdAt: -1 });
+
+  const rows = tests.map(t => `
+    <tr>
+      <td>
+        <strong>${t.title}</strong><br>
+        <span style="font-size: 12px; color: #777;">${t.description || 'No description'}</span>
+      </td>
+      <td>
+        ${new Date(t.createdAt).toISOString().split('T')[0]}<br>
+        <span style="font-size: 11px; color: #666;">
+          🗓 ${t.startDate ? new Date(t.startDate).toLocaleString() : '—'} → 
+          ${t.endDate ? new Date(t.endDate).toLocaleString() : '∞'}
+        </span>
+      </td>
+      <td>${t.category || '—'}</td>
+      <td>
+        <div style="width: 100px; background: #e0e0e0; border-radius: 4px; overflow: hidden;">
+          <div style="width: ${t.timeLimit || 60}%; background: #007bff; height: 10px;"></div>
+        </div>
+        <div style="font-size: 11px; color: #555;">
+          ${t.timeLimit || 60}% duration
+        </div>
+      </td>
+      <td style="text-align: right;">
+        <form action="/admin/toggle-test/${t._id}" method="POST" style="display:inline; margin-right: 10px;">
+          <label style="position: relative; display: inline-block; width: 46px; height: 24px;">
+            <input type="checkbox" name="toggle" onchange="this.form.submit()" ${t.isActive ? 'checked' : ''} style="opacity:0;width:0;height:0;">
+            <span style="position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: ${t.isActive ? '#28a745' : '#ccc'}; border-radius: 24px; transition: .4s;">
+              <span style="position: absolute; content: ''; height: 18px; width: 18px; left: ${t.isActive ? '24px' : '4px'}; bottom: 3px; background-color: white; border-radius: 50%; transition: .4s;"></span>
+            </span>
+          </label>
+        </form>
+        <form action="/admin/update-access/${t._id}" method="POST" onsubmit="return validateForm(this)" style="display:inline-block;">
+          <select name="accessType" onchange="handleAccessChange(this)" style="font-size: 13px; padding: 3px 6px;">
+            <option value="infinite" ${t.isOpenAccess ? 'selected' : ''}>Infinite</option>
+            <option value="limited" ${!t.isOpenAccess ? 'selected' : ''}>Limited</option>
+          </select>
+          <input type="number" name="maxUsers" value="${t.maxUsers || 0}" placeholder="Max users"
+            style="width: 60px; padding: 3px 5px; font-size: 13px; margin-left: 5px;"
+            ${t.isOpenAccess ? 'disabled' : ''}>
+          <button type="submit" style="font-size: 12px; padding: 4px 8px; margin-left: 5px;">Update</button>
+        </form>
+      </td>
+    </tr>
+  `).join('');
+
+  res.send(`
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Radiography Assistant – Tests</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      display: flex;
+      background: #f8f9fb;
     }
     .sidebar {
       width: 220px;
@@ -2498,23 +1126,12 @@ app.get('/admin/dashboard', async (req, res) => {
     .sidebar nav {
       display: flex;
       flex-direction: column;
-      gap: 8px;
-    }
-    .sidebar nav .section-title {
-      margin-top: 15px;
-      margin-bottom: 6px;
-      font-size: 13px;
-      font-weight: bold;
-      color: #666;
-      text-transform: uppercase;
-      border-bottom: 1px solid #ddd;
-      padding-bottom: 4px;
+      gap: 12px;
     }
     .sidebar nav a {
       text-decoration: none;
       color: #0f1f3e;
       font-size: 14px;
-      padding-left: 10px;
     }
     .sidebar nav a:hover {
       text-decoration: underline;
@@ -2534,117 +1151,75 @@ app.get('/admin/dashboard', async (req, res) => {
     .card h3 {
       margin-top: 0;
     }
-    .actions {
-      margin-bottom: 30px;
-      display: flex;
-      gap: 15px;
-      flex-wrap: wrap;
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 20px;
     }
-    .actions form {
-      display: inline;
-    }
-    .actions button {
-      padding: 10px 20px;
-      background: #d9534f;
-      color: white;
+    th, td {
+      padding: 12px 10px;
+      text-align: left;
+      border-bottom: 1px solid #e0e0e0;
+      vertical-align: top;
       font-size: 14px;
-      font-weight: bold;
-      border: none;
-      border-radius: 6px;
-      cursor: pointer;
     }
-    .actions button:hover {
-      background: #c9302c;
+    th {
+      background: #f4f4f4;
     }
-    .tiles {
-      display: flex;
-      gap: 20px;
-      margin-bottom: 30px;
-    }
-    .tile {
-      background: #f0f2f7;
-      border: 1px solid #ddd;
-      border-radius: 10px;
-      padding: 20px;
-      flex: 1;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-    }
-    .tile h2 {
-      font-size: 22px;
-      color: #0f1f3e;
-      margin: 0 0 10px;
-    }
-    .tile p {
-      font-size: 16px;
-      color: #444;
-    }
-    ul {
-      margin: 0;
-      padding-left: 20px;
-      font-size: 14px;
-      color: #0f1f3e;
+    button:hover {
+      color: #0056b3;
     }
   </style>
+  <script>
+    function handleAccessChange(select) {
+      const input = select.form.querySelector('input[name="maxUsers"]');
+      input.disabled = (select.value === 'infinite');
+    }
+    function validateForm(form) {
+      const type = form.accessType.value;
+      const max = form.maxUsers.value;
+      if (type === 'limited' && (!max || max <= 0)) {
+        alert('Please enter a valid number of users.');
+        return false;
+      }
+      return true;
+    }
+  </script>
 </head>
 <body>
   <div class="sidebar">
     <h2>🩻 Radiography</h2>
     <nav>
-      <div class="section-title">Management</div>
-      <a href="/admin/dashboard">📊 Dashboard</a>
       <a href="/admin/tests">📋 Manage Tests</a>
       <a href="/admin/create-test">➕ Create Test</a>
       <a href="/admin/questions">🧠 Manage Questions</a>
       <a href="/upload-form">📤 Upload Excel</a>
-      <div class="section-title">Analytics</div>
-      <a href="/admin/test-analytics">📈 Test Analytics</a>
-      <a href="/admin/user-analytics">👥 User Analytics</a>
-      <a href="/admin/question-analytics">❓ Question Analytics</a>
     </nav>
   </div>
   <div class="main">
     <div class="card">
-      <h3>📊 Radiography Admin Dashboard</h3>
-      <p>Overview of users, questions, tests, and performance metrics.</p>
+      <h3>Welcome to the Weekly Radiography Exam Center</h3>
+      <p>
+        ✅ Manage test availability window<br>
+        ✅ Limit student access count or keep open<br>
+        ✅ Toggle test on/off visibility
+      </p>
     </div>
-
-    <div class="actions">
-      <form action="/admin/reset-tests" method="POST">
-        <button type="submit">🔁 Reset All Tests</button>
-      </form>
-      <form action="/admin/reset-users" method="POST">
-        <button type="submit">👥 Reset All Users</button>
-      </form>
-      <form action="/admin/reset-analytics" method="POST">
-        <button type="submit">🧹 Clear All Analytics</button>
-      </form>
-    </div>
-
-    <div class="tiles">
-      <div class="tile">
-        <h2>👥 Users</h2>
-        <p>${userCount}</p>
-      </div>
-      <div class="tile">
-        <h2>📋 Tests</h2>
-        <p>${testCount}</p>
-      </div>
-      <div class="tile">
-        <h2>❓ Questions</h2>
-        <p>${questionCount}</p>
-      </div>
-      <div class="tile">
-        <h2>📈 Attempts</h2>
-        <p>${attemptCount}</p>
-      </div>
-      <div class="tile">
-        <h2>⭐ Avg Score</h2>
-        <p>${averageScore}</p>
-      </div>
-    </div>
-
-    <h3>🏆 Top 5 Performers</h3>
-    <ul>${topList}</ul>
+    <h2>Admin – Manage Test Access</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Test</th>
+          <th>Date / Window</th>
+          <th>Category</th>
+          <th>Settings</th>
+          <th>Access</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows}
+      </tbody>
+    </table>
   </div>
 </body>
 </html>
@@ -2652,1003 +1227,2292 @@ app.get('/admin/dashboard', async (req, res) => {
 });
 
 
-app.post('/admin/reset-tests', async (req, res) => {
-  await Test.deleteMany({});
-  console.log('🧨 All tests deleted');
-  res.redirect('/admin/dashboard');
+app.post('/admin/update-access/:id', async (req, res) => {
+  const { id } = req.params;
+  const { accessType, maxUsers } = req.body;
+
+  try {
+    const test = await Test.findById(id);
+    if (!test) {
+      console.warn(`⚠️ Test not found: ${id}`);
+      return res.status(404).send('Test not found');
+    }
+
+    if (accessType === 'infinite') {
+      test.isOpenAccess = true;
+      test.maxUsers = 0;
+      console.log(`🔁 Updated: Test "${test.title}" set to Infinite Access`);
+    } else if (accessType === 'limited') {
+      const parsedUsers = parseInt(maxUsers, 10);
+      if (isNaN(parsedUsers) || parsedUsers < 1) {
+        console.warn(`⚠️ Invalid maxUsers: "${maxUsers}"`);
+        return res.status(400).send('Please enter a valid number of users.');
+      }
+      test.isOpenAccess = false;
+      test.maxUsers = parsedUsers;
+      console.log(`🔁 Updated: Test "${test.title}" limited to ${parsedUsers} users`);
+    } else {
+      console.warn(`⚠️ Invalid accessType: "${accessType}"`);
+      return res.status(400).send('Invalid access type.');
+    }
+
+    await test.save();
+    res.redirect('/admin/tests');
+  } catch (err) {
+    console.error('❌ Failed to update test access settings:', err);
+    res.status(500).send('Internal server error');
+  }
 });
 
 
-app.post('/admin/reset-users', async (req, res) => {
-  await User.deleteMany({});
-  console.log('👥 All users deleted');
-  res.redirect('/admin/dashboard');
+
+app.post('/admin/toggle-test/:id', async (req, res) => {
+  const testId = req.params.id;
+  console.log(`📥 Received POST to toggle test with ID: ${testId}`);
+
+  try {
+    const test = await Test.findById(testId);
+    if (!test) {
+      console.log(`❌ No test found for ID: ${testId}`);
+      return res.status(404).send('❌ Test not found');
+    }
+
+    const originalStatus = test.isActive;
+    test.isActive = !test.isActive;
+    test.updatedAt = new Date();
+
+    await test.save();
+
+    console.log(`🔁 Test "${test.title}" (ID: ${testId}) toggled from ${originalStatus ? '✅ Active' : '🚫 Blocked'} → ${test.isActive ? '✅ Active' : '🚫 Blocked'}`);
+    console.log(`🕒 Updated at: ${test.updatedAt.toISOString()}`);
+
+    res.redirect('/admin/tests');
+  } catch (err) {
+    console.error('❌ Error toggling test access:', err);
+    res.status(500).send('Internal Server Error');
+  }
 });
 
 
-app.post('/admin/reset-analytics', async (req, res) => {
-  await Result.deleteMany({});
-  console.log('📉 All analytics (results) cleared');
-  res.redirect('/admin/dashboard');
+app.get('/admin/create-test', (req, res) => {
+  res.send(`
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Create New Test</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f8f9fb;
+      margin: 0;
+      display: flex;
+    }
+
+    .sidebar {
+      width: 220px;
+      background: #ffffff;
+      padding: 20px;
+      height: 100vh;
+      border-right: 1px solid #ddd;
+    }
+
+    .sidebar h2 {
+      font-size: 18px;
+      color: #0f1f3e;
+      margin-bottom: 20px;
+    }
+
+    .sidebar nav {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .sidebar nav a {
+      text-decoration: none;
+      color: #0f1f3e;
+      font-size: 14px;
+    }
+
+    .sidebar nav a:hover {
+      text-decoration: underline;
+    }
+
+    .main {
+      flex: 1;
+      padding: 40px;
+      background: #ffffff;
+    }
+
+    .card {
+      background: #0f1f3e;
+      color: white;
+      padding: 20px;
+      border-radius: 12px;
+      margin-bottom: 30px;
+    }
+
+    h3 {
+      margin-top: 0;
+    }
+
+    form {
+      background: #fff;
+      padding: 30px;
+      border-radius: 8px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+      max-width: 550px;
+    }
+
+    label {
+      font-weight: bold;
+      color: #333;
+      display: block;
+      margin-top: 15px;
+    }
+
+    input, textarea, select {
+      width: 100%;
+      padding: 10px;
+      font-size: 14px;
+      margin-top: 8px;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+    }
+
+    button {
+      margin-top: 20px;
+      padding: 10px 20px;
+      font-size: 14px;
+      background: #007bff;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: #0056b3;
+    }
+  </style>
+</head>
+<body>
+  <div class="sidebar">
+    <h2>🩻 Radiography</h2>
+    <nav>
+      <a href="/admin/tests">📋 Manage Tests</a>
+      <a href="/admin/create-test">➕ Create Test</a>
+      <a href="/admin/questions">🧠 Manage Questions</a>
+      <a href="/upload-form">📤 Upload Excel</a>
+    </nav>
+  </div>
+
+  <div class="main">
+    <div class="card">
+      <h3>➕ Create New Test</h3>
+      <form method="POST" action="/admin/create-test">
+        <label>Test Title:</label>
+        <input type="text" name="title" required />
+
+        <label>Description:</label>
+        <textarea name="description" rows="3"></textarea>
+
+        <label>Time Limit (minutes):</label>
+        <input type="number" name="timeLimit" min="1" />
+
+        <label>Start Date (optional):</label>
+        <input type="datetime-local" name="startDate" />
+
+        <label>End Date (optional):</label>
+        <input type="datetime-local" name="endDate" />
+
+        <label>Max Users Allowed:</label>
+        <input type="number" name="maxUsers" min="0" placeholder="0 = unlimited" />
+
+        <label>Open Access (ignore max user limit):</label>
+        <select name="isOpenAccess">
+          <option value="true" selected>Yes</option>
+          <option value="false">No</option>
+        </select>
+
+        <button type="submit">✅ Create Test</button>
+      </form>
+    </div>
+  </div>
+</body>
+</html>
+  `);
 });
 
 
-// GET /admin/user-analytics – all users, including those with no tests
-app.get('/admin/user-analytics', async (req, res) => {
-  const users = await User.find().sort({ createdAt: -1 });
-  const results = await Result.find();
+app.post('/admin/create-test', async (req, res) => {
+  const { title, description, timeLimit } = req.body;
 
-  const summaries = users.map(user => {
-    const userResults = results.filter(r => r.userId?.toString() === user._id.toString());
-    const testsTaken = userResults.length;
-    const avgScore = testsTaken > 0
-      ? (userResults.reduce((sum, r) => sum + r.score, 0) / testsTaken).toFixed(1)
-      : '—';
-    const lastAttempt = testsTaken > 0
-      ? new Date(Math.max(...userResults.map(r => new Date(r.createdAt))))
-      : null;
-
-    return { user, testsTaken, avgScore, lastAttempt };
+  const newTest = new Test({
+    title,
+    description,
+    timeLimit: Number(timeLimit)
   });
 
-  const rows = summaries.map(s => `
-    <tr>
-      <td><a href="/admin/user-analytics/${s.user._id}">${s.user.name}</a></td>
-      <td>${s.testsTaken}</td>
-      <td>${s.avgScore}</td>
-      <td>${s.lastAttempt ? new Date(s.lastAttempt).toLocaleDateString() : '—'}</td>
-      <td>${s.user.state || '—'}, ${s.user.country || '—'}</td>
-      <td>${s.user.examDate ? new Date(s.user.examDate).toLocaleDateString() : '—'}</td>
-    </tr>
-  `).join("");
+  await newTest.save();
 
   res.send(`
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <title>User Analytics</title>
-      <style>
-        body { margin: 0; font-family: Arial; background: #f8f9fb; display: flex; }
-        .sidebar {
-          width: 220px; background: #fff; padding: 20px; height: 100vh; border-right: 1px solid #ddd;
-        }
-        .sidebar h2 {
-          font-size: 18px; margin-bottom: 20px; color: #0f1f3e;
-        }
-        .sidebar nav {
-          display: flex; flex-direction: column; gap: 8px;
-        }
-        .sidebar nav .section-title {
-          margin-top: 15px; margin-bottom: 6px;
-          font-size: 13px; font-weight: bold; color: #666;
-          text-transform: uppercase; border-bottom: 1px solid #ddd; padding-bottom: 4px;
-        }
-        .sidebar nav a {
-          text-decoration: none; color: #0f1f3e; font-size: 14px; padding-left: 10px;
-        }
-        .sidebar nav a:hover {
-          text-decoration: underline;
-        }
-        .main {
-          flex: 1; padding: 40px; background: #fff;
-        }
-        h3 {
-          color: #0f1f3e;
-        }
-        table {
-          width: 100%; border-collapse: collapse; background: #fff; margin-top: 20px;
-        }
-        th, td {
-          padding: 10px 12px; text-align: left;
-          border-bottom: 1px solid #e0e0e0; font-size: 14px;
-        }
-        th {
-          background: #f4f4f4;
-        }
-        td a {
-          color: #007bff;
-          text-decoration: none;
-        }
-        td a:hover {
-          text-decoration: underline;
-        }
-      </style>
-    </head>
-    <body>
-      <div class="sidebar">
-        <h2>🩻 Radiography</h2>
-        <nav>
-          <div class="section-title">Management</div>
-          <a href="/admin/dashboard">📊 Dashboard</a>
-          <a href="/admin/tests">📋 Manage Tests</a>
-          <a href="/admin/create-test">➕ Create Test</a>
-          <a href="/admin/questions">🧠 Manage Questions</a>
-          <a href="/upload-form">📤 Upload Excel</a>
-          <div class="section-title">Analytics</div>
-          <a href="/admin/test-analytics">📈 Test Analytics</a>
-          <a href="/admin/user-analytics" style="font-weight: bold;">👥 User Analytics</a>
-          <a href="/admin/question-analytics">❓ Question Analytics</a>
-        </nav>
-      </div>
-      <div class="main">
-        <h3>👥 User Analytics Overview</h3>
-        <table>
-          <thead>
-            <tr>
-              <th>User</th>
-              <th>Tests Taken</th>
-              <th>Avg Score</th>
-              <th>Last Attempt</th>
-              <th>Province / Country</th>
-              <th>Exam Date</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${rows}
-          </tbody>
-        </table>
-      </div>
-    </body>
-    </html>
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Test Created</title>
+  <style>
+    body { font-family: Arial; background: #f8f9fb; margin: 0; display: flex; }
+    .sidebar { width: 220px; background: #fff; padding: 20px; height: 100vh; border-right: 1px solid #ddd; }
+    .main { flex: 1; padding: 40px; background: #fff; }
+    .card { background: #0f1f3e; color: #fff; padding: 20px; border-radius: 12px; }
+    a {
+      display: inline-block; margin-top: 20px;
+      padding: 10px 20px; background: #007bff;
+      color: white; text-decoration: none; border-radius: 6px;
+    }
+    a:hover { background: #0056b3; }
+  </style>
+</head>
+<body>
+  <div class="sidebar"><h2>🩻 Radiography</h2></div>
+  <div class="main">
+    <div class="card">
+      <h3>✅ Test Created</h3>
+      <p><strong>${title}</strong> has been successfully added.</p>
+      <a href="/admin/create-test">➕ Create Another</a>
+      <a href="/admin/questions" style="margin-left: 10px;">⬅ Back to Questions</a>
+    </div>
+  </div>
+</body>
+</html>
   `);
 });
 
 
+/* ========================================================================== *
+ * ADMIN – USERS
+ * --------------------------------------------------------------------------
+ * Purpose: Admin view for users and simple status toggles.
+ * Touches: User (isActive).
+ * Key routes:
+ *   GET  /admin/users            – Admin list of users
+ *   POST /admin/toggle-user/:id  – Enable/disable a user
+ * Notes: Delete button form exists in HTML but no /admin/delete-user route in code.
+ * ========================================================================== */
 
 
-app.get('/admin/user-analytics/:id', async (req, res) => {
-  const userId = req.params.id;
-  const user = await User.findById(userId);
-  if (!user) return res.send('<h2>User not found</h2>');
+app.get('/admin/users', async (req, res) => {
+  const users = await User.find().sort({ createdAt: -1 });
 
-  const attempts = await Result.find({ userId })
-    .populate('testId')
-    .sort({ createdAt: -1 });
-
-  const rows = attempts.map(a => {
-    const totalSeconds = a.timeTaken || 0;
-    const minutes = Math.floor(totalSeconds / 60);
-    const seconds = totalSeconds % 60;
-    const timeFormatted = `${minutes}m ${seconds}s`;
-
-    return `
-      <tr>
-        <td>${a.testId?.title || '—'}</td>
-        <td>${a.score}</td>
-        <td>${a.correctAnswers}/${a.totalQuestions}</td>
-        <td>${new Date(a.createdAt).toLocaleString()}</td>
-        <td>${timeFormatted}</td>
-      </tr>
-    `;
-  }).join('');
-
-  res.send(`
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <title>${user.name} – Analytics</title>
-      <style>
-        body { margin: 0; font-family: Arial; background: #f8f9fb; display: flex; }
-        .sidebar {
-          width: 220px; background: #fff; padding: 20px; height: 100vh; border-right: 1px solid #ddd;
-        }
-        .sidebar h2 {
-          font-size: 18px; margin-bottom: 20px; color: #0f1f3e;
-        }
-        .sidebar nav {
-          display: flex; flex-direction: column; gap: 8px;
-        }
-        .sidebar nav .section-title {
-          margin-top: 15px; margin-bottom: 6px;
-          font-size: 13px; font-weight: bold; color: #666;
-          text-transform: uppercase; border-bottom: 1px solid #ddd; padding-bottom: 4px;
-        }
-        .sidebar nav a {
-          text-decoration: none; color: #0f1f3e; font-size: 14px; padding-left: 10px;
-        }
-        .sidebar nav a:hover {
-          text-decoration: underline;
-        }
-        .main {
-          flex: 1; padding: 40px; background: #fff;
-        }
-        h3 {
-          color: #0f1f3e;
-        }
-        table {
-          width: 100%; border-collapse: collapse; background: #fff; margin-top: 20px;
-        }
-        th, td {
-          padding: 10px 12px; text-align: left;
-          border-bottom: 1px solid #e0e0e0; font-size: 14px;
-        }
-        th {
-          background: #f4f4f4;
-        }
-      </style>
-    </head>
-    <body>
-      <div class="sidebar">
-        <h2>🩻 Radiography</h2>
-        <nav>
-          <div class="section-title">Analytics</div>
-          <a href="/admin/user-analytics">← Back to Users</a>
-        </nav>
-      </div>
-      <div class="main">
-        <h3>👤 ${user.name} – Detailed Analytics</h3>
-        <table>
-          <thead>
-            <tr>
-              <th>Test</th>
-              <th>Score</th>
-              <th>Correct</th>
-              <th>Date</th>
-              <th>Total Time</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${rows}
-          </tbody>
-        </table>
-      </div>
-    </body>
-    </html>
-  `);
-});
-
-
-
-// ----------------------- TEST ANALYTICS OVERVIEW ---------------------------
-// GET /admin/test-analytics – list of tests with summary metrics
-app.get('/admin/test-analytics', async (req, res) => {
-  const summaries = await Result.aggregate([
-    {
-      $group: {
-        _id: "$testId",
-        attempts: { $sum: 1 },
-        avgScore: { $avg: "$score" },
-        lastAttempt: { $max: "$createdAt" }
-      }
-    },
-    { $lookup: { from: "tests", localField: "_id", foreignField: "_id", as: "test" } },
-    { $unwind: "$test" },
-    { $sort: { lastAttempt: -1 } }
-  ]);
-
-  const rows = summaries.map(s => `
+  const rows = users.map(user => `
     <tr>
-      <td><a href="/admin/test-analytics/${s.test._id}">${s.test.title}</a></td>
-      <td>${s.attempts}</td>
-      <td>${s.avgScore.toFixed(1)}</td>
-      <td>${new Date(s.lastAttempt).toLocaleDateString()}</td>
-    </tr>
-  `).join("");
-
-  res.send(`<!DOCTYPE html><html><head><title>Test Analytics</title>
-    <style>
-      body{margin:0;font-family:Arial;background:#f8f9fb;display:flex}
-      .sidebar{width:220px;background:#fff;padding:20px;height:100vh;border-right:1px solid #ddd}
-      .sidebar h2{font-size:18px;margin-bottom:20px;color:#0f1f3e}
-      .sidebar nav{display:flex;flex-direction:column;gap:8px}
-      .sidebar nav .section-title{margin-top:15px;margin-bottom:6px;font-size:13px;font-weight:bold;color:#666;text-transform:uppercase;border-bottom:1px solid #ddd;padding-bottom:4px}
-      .sidebar nav a{text-decoration:none;color:#0f1f3e;font-size:14px;padding-left:10px}
-      .sidebar nav a:hover{text-decoration:underline}
-      .main{flex:1;padding:40px;background:#fff}
-      h3{color:#0f1f3e}
-      table{width:100%;border-collapse:collapse;background:#fff;margin-top:20px}
-      th,td{padding:10px 12px;text-align:left;border-bottom:1px solid #e0e0e0;font-size:14px}
-      th{background:#f4f4f4}
-    </style></head><body>
-      <div class="sidebar">
-        <h2>🩻 Radiography</h2>
-        <nav>
-          <div class="section-title">Management</div>
-          <a href="/admin/dashboard">📊 Dashboard</a>
-          <a href="/admin/tests">📋 Manage Tests</a>
-          <a href="/admin/create-test">➕ Create Test</a>
-          <a href="/admin/questions">🧠 Manage Questions</a>
-          <a href="/upload-form">📤 Upload Excel</a>
-          <div class="section-title">Analytics</div>
-          <a href="/admin/test-analytics" style="font-weight:bold;">📈 Test Analytics</a>
-          <a href="/admin/user-analytics">👥 User Analytics</a>
-          <a href="/admin/question-analytics">❓ Question Analytics</a>
-        </nav>
-      </div>
-      <div class="main">
-        <h3>📈 Test Analytics Overview</h3>
-        <table>
-          <thead><tr><th>Test</th><th>Attempts</th><th>Avg Score</th><th>Last Attempt</th></tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>
-    </body></html>`);
-});
-
-
-// ✅ Route: /admin/test-analytics/:id – detailed view of a test
-app.get('/admin/test-analytics/:id', async (req, res) => {
-  const testId = req.params.id;
-  const test = await Test.findById(testId);
-  if (!test) return res.send('<h2>Test not found</h2>');
-
-  const attempts = await Result.find({ testId }).populate('userId').sort({ createdAt: -1 });
-  const rows = attempts.map(a => `
-    <tr>
-      <td>${a.userId?.name || '—'}</td>
-      <td>${a.score}</td>
-      <td>${a.correctAnswers}/${a.totalQuestions}</td>
-      <td>${new Date(a.createdAt).toLocaleString()}</td>
+      <td>
+        <strong>${user.name}</strong><br>
+        <span style="font-size: 12px; color: #777;">${user.email}</span>
+      </td>
+      <td>${new Date(user.createdAt).toISOString().split('T')[0]}</td>
+      <td style="color: ${user.isActive ? '#28a745' : '#dc3545'};">
+        ${user.isActive ? '✔️ Active' : '🚫 Inactive'}
+      </td>
+      <td style="text-align:right;">
+        <form action="/admin/toggle-user/${user._id}" method="POST" style="display:inline;">
+          <button class="btn-toggle" type="submit">${user.isActive ? 'Disable' : 'Enable'}</button>
+        </form>
+        <form action="/admin/delete-user/${user._id}" method="POST" style="display:inline;" onsubmit="return confirm('Delete this user?');">
+          <button class="btn-delete" type="submit">🗑️</button>
+        </form>
+      </td>
     </tr>
   `).join('');
 
-  res.send(`<!DOCTYPE html><html><head><title>${test.title} – Analytics</title>
-    <style>
-      body { margin: 0; font-family: Arial; background: #f8f9fb; display: flex; }
-      .sidebar { width: 220px; background: #fff; padding: 20px; height: 100vh; border-right: 1px solid #ddd; }
-      .sidebar h2 { font-size: 18px; margin-bottom: 20px; color: #0f1f3e; }
-      .sidebar nav { display: flex; flex-direction: column; gap: 8px; }
-      .sidebar nav .section-title { margin-top: 15px; margin-bottom: 6px; font-size: 13px; font-weight: bold; color: #666; text-transform: uppercase; border-bottom: 1px solid #ddd; padding-bottom: 4px; }
-      .sidebar nav a { text-decoration: none; color: #0f1f3e; font-size: 14px; padding-left: 10px; }
-      .sidebar nav a:hover { text-decoration: underline; }
-      .main { flex: 1; padding: 40px; background: #fff; }
-      h3 { color: #0f1f3e; }
-      table { width: 100%; border-collapse: collapse; background: #fff; margin-top: 20px; }
-      th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #e0e0e0; font-size: 14px; }
-      th { background: #f4f4f4; }
-    </style></head><body>
-    <div class="sidebar">
-      <h2>🩻 Radiography</h2>
-      <nav>
-        <div class="section-title">Analytics</div>
-        <a href="/admin/test-analytics">← Back to Tests</a>
-      </nav>
+  res.send(`
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Radiography Assistant – Manage Users</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #f8f9fb;
+      display: flex;
+    }
+
+    .sidebar {
+      width: 220px;
+      background: #ffffff;
+      padding: 20px;
+      height: 100vh;
+      border-right: 1px solid #ddd;
+    }
+
+    .sidebar h2 {
+      font-size: 18px;
+      color: #0f1f3e;
+      margin-bottom: 20px;
+    }
+
+    .sidebar nav {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .sidebar nav a {
+      text-decoration: none;
+      color: #0f1f3e;
+      font-size: 14px;
+    }
+
+    .sidebar nav a:hover {
+      text-decoration: underline;
+    }
+
+    .main {
+      flex: 1;
+      padding: 40px;
+      background: #ffffff;
+    }
+
+    .card {
+      background: #0f1f3e;
+      color: white;
+      padding: 20px;
+      border-radius: 12px;
+      margin-bottom: 30px;
+    }
+
+    h2 {
+      color: #0f1f3e;
+      margin-top: 0;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #fff;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+    }
+
+    th, td {
+      padding: 12px 14px;
+      font-size: 14px;
+      border-bottom: 1px solid #eee;
+      text-align: left;
+    }
+
+    th {
+      background: #f4f4f4;
+      text-transform: uppercase;
+      font-size: 12px;
+    }
+
+    .btn-toggle {
+      padding: 5px 10px;
+      background: #ffc107;
+      color: black;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      margin-right: 6px;
+    }
+
+    .btn-delete {
+      padding: 5px 10px;
+      background: #dc3545;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    .btn-toggle:hover { background: #e0a800; }
+    .btn-delete:hover { background: #c82333; }
+  </style>
+</head>
+<body>
+  <div class="sidebar">
+    <h2>🩻 Radiography</h2>
+    <nav>
+      <a href="/admin/tests">📋 Manage Tests</a>
+      <a href="/admin/create-test">➕ Create Test</a>
+      <a href="/admin/questions">🧠 Manage Questions</a>
+      <a href="/upload-form">📤 Upload Excel</a>
+      <a href="/admin/users">👥 Manage Users</a>
+    </nav>
+  </div>
+
+  <div class="main">
+    <div class="card">
+      <h3>👥 User Management Panel</h3>
+      <p>
+        ✅ View all registered users<br>
+        ✅ Toggle active status or permanently delete accounts
+      </p>
     </div>
-    <div class="main">
-      <h3>📋 ${test.title} – Test Analytics</h3>
-      <table>
-        <thead><tr><th>User</th><th>Score</th><th>Correct</th><th>Date</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-    </div>
-  </body></html>`);
+
+    <h2>Registered Users</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>User</th>
+          <th>Joined</th>
+          <th>Status</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows}
+      </tbody>
+    </table>
+  </div>
+</body>
+</html>
+  `);
+});
+
+app.post('/admin/toggle-user/:id', async (req, res) => {
+  const user = await User.findById(req.params.id);
+  if (!user) return res.status(404).send('User not found');
+
+  user.isActive = !user.isActive;
+  await user.save();
+
+  res.redirect('/admin/users');
 });
 
 
+/* ========================================================================== *
+ * TESTS (TAKING & FLOW)
+ * --------------------------------------------------------------------------
+ * Purpose: End-to-end test taking, scoring, and per-question timing.
+ * Touches: Test, Question, Result, TestProgress, session (answers/timing).
+ * Key routes:
+ *   GET  /start-test/:testId       – Render test UI + question N, begins timers
+ *   POST /submit-question          – Save answer, increment choiceCounts, track time
+ *   POST /submit-test              – Score posted answers and persist Result
+ *   GET  /submit-test-final/:testId– Finalize session-based run, persist Result
+ * Notes: /start-test normalizes correctAnswer to letter; stores timing in session.
+ * ========================================================================== */
 
-// ✅ Route: /admin/test-analytics/:id/users – shows each user and their latest attempt for a given test
-app.get('/admin/test-analytics/:id/users', async (req, res) => {
-  const testId = req.params.id;
-  const test = await Test.findById(testId);
-  if (!test) return res.send('<h2>Test not found</h2>');
+// GET – read Test & Questions, upsert TestProgress, render HTML
 
-  // Get all results for this test and map by userId (latest only)
-  const allResults = await Result.find({ testId }).populate('userId').sort({ createdAt: -1 });
-  const uniqueResults = [];
-  const seen = new Set();
+app.post('/save-answer/:testId/:questionId', (req, res) => {
+  const { testId, questionId } = req.params;
+  const { selected, timeSpent } = req.body;
 
-  for (const r of allResults) {
-    if (!seen.has(r.userId._id.toString())) {
-      seen.add(r.userId._id.toString());
-      uniqueResults.push(r);
+  if (!req.session.answers) req.session.answers = {};
+  req.session.answers[questionId] = { selected, timeSpent };
+
+  console.log("💾 Answer saved:", req.session.answers);
+  res.json({ ok: true });
+});
+
+app.get('/start-test/:testId', async (req, res) => {
+  const t0 = Date.now();
+  const { testId } = req.params;
+  const questionIndex = parseInt(req.query.index || '0', 10);
+  const userId = req.session?.userId || null;
+
+  // ===== AUTOSAVE (from navigation) =========================================
+  // We expect query params when user clicks Next/Prev/Finish:
+  //   prevQid=<questionId just answered>
+  //   chosen=<letter A-D>
+  //   elapsedSec=<seconds spent on that question>
+  //   finish=1  (optional: if present, redirect to submit-test-final after save)
+  const prevQid = (req.query.prevQid || req.query.qid || '').trim();
+  const chosenLetterRaw = (req.query.chosen || '').trim();
+  const elapsedSec = parseInt(req.query.elapsedSec || req.query.timeSpent || '0', 10) || 0;
+  const finishAfterSave = String(req.query.finish || '') === '1';
+
+  // Initialize session stores
+  if (!req.session.answers) req.session.answers = {};
+  if (!req.session.questionTimes) req.session.questionTimes = {};
+
+  // Helper: normalize (letters or indices -> letter)
+  const toLetter = (val, choicesLen) => {
+    if (val == null) return null;
+    const s = String(val).trim();
+    if (/^[A-Za-z]$/.test(s)) return s.toUpperCase();
+    const n = parseInt(s, 10);
+    if (!isNaN(n)) {
+      if (n >= 0 && n < choicesLen) return String.fromCharCode(65 + n);   // 0->A
+      if (n >= 1 && n <= choicesLen) return String.fromCharCode(64 + n);  // 1->A
     }
+    return null;
+  };
+
+  console.log(`\n===== [ROUTE HIT] GET /start-test =====`);
+  console.log('📦 Params:', { testId });
+  console.log('📩 Query:', { index: req.query.index, parsedIndex: questionIndex, prevQid, chosenLetterRaw, elapsedSec, finishAfterSave });
+  console.log('💾 Session snapshot (pre-save):', {
+    hasSession: !!req.session,
+    userId,
+    testStartTime: req.session?.testStartTime || null,
+    answersCount: Object.keys(req.session.answers || {}).length
+  });
+
+  // Initialize test timer once
+  if (questionIndex === 0 && !req.session.testStartTime) {
+    req.session.testStartTime = Date.now();
+    console.log('⏱️ Initialized testStartTime:', new Date(req.session.testStartTime).toISOString());
   }
 
-  const rows = uniqueResults.map(r => `
-    <tr>
-      <td>${r.userId?.name || '—'}</td>
-      <td>${r.score}</td>
-      <td>${r.correctAnswers}/${r.totalQuestions}</td>
-      <td>${new Date(r.createdAt).toLocaleString()}</td>
-      <td><a href="/admin/user-analytics/${r.userId._id}" style="font-size: 13px;">🔍 View User</a></td>
-    </tr>
-  `).join('');
+  try {
+    // Load test & questions
+    console.time('🗂️ Test load');
+    const test = await Test.findById(testId).lean();
+    console.timeEnd('🗂️ Test load');
+    console.log('🧾 Test found?', !!test, 'isActive:', test?.isActive);
 
-  res.send(`<!DOCTYPE html><html><head><title>${test.title} – Users Who Attempted</title>
-    <style>
-      body { margin: 0; font-family: Arial, sans-serif; background: #f8f9fb; display: flex; }
-      .sidebar {
-        width: 220px;
-        background: #fff;
-        padding: 20px;
-        height: 100vh;
-        border-right: 1px solid #ddd;
+    console.time('🗂️ Questions load');
+    const questions = await Question.find({ testId }).sort({ _id: 1 }).lean();
+    console.timeEnd('🗂️ Questions load');
+    console.log('🧾 Questions count:', questions.length);
+
+    if (!test?.isActive) {
+      console.log('❌ Guard: test not active');
+      return res.status(404).send('<h2>Test not available</h2>');
+    }
+    if (!questions[questionIndex]) {
+      console.log('❌ Guard: question index out of range:', { questionIndex, max: questions.length - 1 });
+      return res.status(404).send('<h2>Test not available</h2>');
+    }
+
+    // ===== AUTOSAVE (resolve chosen letter using the question we just answered)
+    if (prevQid && chosenLetterRaw) {
+      // Try to normalize against the question's choices length (if we can find it)
+      const prevQ = questions.find(q => String(q._id) === prevQid) ||
+                    (await Question.findById(prevQid).lean().catch(() => null));
+      const normalizedChosen = toLetter(chosenLetterRaw, (prevQ?.choices || []).length) || chosenLetterRaw.toUpperCase();
+
+      req.session.answers[`q_${prevQid}`] = normalizedChosen; // store LETTER
+      req.session.questionTimes[prevQid] = elapsedSec;
+
+      console.log('💾 AUTOSAVE from nav:', {
+        prevQid,
+        normalizedChosen,
+        elapsedSec,
+        answersCount: Object.keys(req.session.answers || {}).length,
+        snapshotKeys: Object.keys(req.session.answers || {})
+      });
+
+      // If user clicked Finish and we just saved, short-circuit to final grading
+      if (finishAfterSave) {
+        console.log('🏁 Finish-after-save detected → redirecting to /submit-test-final');
+        return res.redirect(`/submit-test-final/${testId}`);
       }
-      .sidebar h2 {
-        font-size: 18px;
-        margin-bottom: 20px;
-        color: #0f1f3e;
+    }
+
+    // Presence ping (non-blocking)
+    if (userId) {
+      console.time('👤 Presence upsert');
+      const now = new Date();
+      const user = await User.findById(userId).select('lastSeen').lean().catch(() => null);
+      const updates = { lastActive: now };
+      if (!user?.lastSeen || now - new Date(user.lastSeen) > 60 * 1000) updates.lastSeen = now;
+      await User.findByIdAndUpdate(userId, updates).catch(()=>{});
+      console.timeEnd('👤 Presence upsert');
+    }
+
+    // Keep breadcrumb for resume-later UX
+    if (userId && typeof TestProgress !== 'undefined') {
+      console.time('🧭 TestProgress upsert');
+      await TestProgress.findOneAndUpdate(
+        { userId, testId },
+        { $set: { index: questionIndex, updatedAt: new Date(), status: 'active' } },
+        { upsert: true }
+      );
+      console.timeEnd('🧭 TestProgress upsert');
+    }
+
+    // Current question
+    const q = questions[questionIndex];
+    const totalQuestions = questions.length;
+    const isLast = questionIndex + 1 >= totalQuestions;
+
+    // Build per-option rationales map (if present)
+    const mapChoiceExplanations = (q) => {
+      const out = {};
+      const { choices = [], choiceExplanations } = q;
+      if (!choiceExplanations) return out;
+      if (Array.isArray(choiceExplanations)) {
+        choiceExplanations.forEach((text, idx) => {
+          const letter = String.fromCharCode(65 + idx);
+          if (text) out[letter] = String(text);
+        });
+      } else if (typeof choiceExplanations === 'object') {
+        Object.entries(choiceExplanations).forEach(([k, v]) => {
+          if (v == null) return;
+          let letter = null;
+          if (/^[A-Za-z]$/.test(k)) letter = k.toUpperCase();
+          else if (!isNaN(parseInt(k,10))) {
+            const idx = parseInt(k,10);
+            if (idx >= 0 && idx < choices.length) letter = String.fromCharCode(65 + idx);
+            if (idx >= 1 && idx <= choices.length) letter = letter || String.fromCharCode(64 + idx);
+          }
+          if (letter) out[letter] = String(v);
+        });
       }
-      .sidebar nav {
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-      }
-      .sidebar nav .section-title {
-        margin-top: 15px;
-        margin-bottom: 6px;
-        font-size: 13px;
-        font-weight: bold;
-        color: #666;
-        text-transform: uppercase;
-        border-bottom: 1px solid #ddd;
-        padding-bottom: 4px;
-      }
-      .sidebar nav a {
-        text-decoration: none;
-        color: #0f1f3e;
-        font-size: 14px;
-        padding-left: 10px;
-      }
-      .sidebar nav a:hover {
-        text-decoration: underline;
-      }
-      .main {
-        flex: 1;
-        padding: 40px;
-        background: #fff;
-      }
-      h3 {
-        margin-bottom: 10px;
-        color: #0f1f3e;
-      }
-      table {
-        width: 100%;
-        border-collapse: collapse;
-        background: #fff;
-        margin-top: 20px;
-        border: 1px solid #e0e0e0;
-        border-radius: 6px;
-        overflow: hidden;
-      }
-      th, td {
-        padding: 12px 14px;
-        text-align: left;
-        border-bottom: 1px solid #eee;
-        font-size: 14px;
-      }
-      th {
-        background: #f4f4f4;
-        color: #333;
-        font-weight: bold;
-      }
-      tr:hover {
-        background-color: #f9f9f9;
-      }
-    </style></head><body>
-    <div class="sidebar">
-      <h2>🩻 Radiography</h2>
-      <nav>
-        <div class="section-title">Analytics</div>
-        <a href="/admin/dashboard">🏠 Admin Dashboard</a>
-        <a href="/admin/test-analytics">📊 All Test Analytics</a>
-        <a href="/admin/test-analytics/${testId}">⬅ Back to Test</a>
-      </nav>
+      return out;
+    };
+
+    const choiceExps = mapChoiceExplanations(q);
+    const normalizedCorrect = toLetter(q.correctAnswer, (q.choices || []).length);
+    const savedForThisQ = req.session.answers[`q_${q._id}`] || null;
+
+    console.log('🧮 Question position', { questionIndex, totalQuestions, isLast });
+    console.log('🧮 Answer normalization', { raw: q.correctAnswer, normalized: normalizedCorrect });
+    console.log('🧠 Choice explanations keys', Object.keys(choiceExps));
+    console.log('🗂️ Pre-checked from session for this q:', { qid: String(q._id), savedForThisQ });
+
+    // ===== Render HTML (with pre-check + nav autosave wiring) ================
+    function render({
+      title, scenario, vitals, prompt, choices,
+      correctLetter, explanationText, choiceExps,
+      testIdForClient, questionId, isLast = false
+    }) {
+      console.groupCollapsed('🧩 Render payload summary');
+      console.log({
+        hasTitle: !!title,
+        hasScenario: !!scenario,
+        hasVitals: !!vitals,
+        hasPrompt: !!prompt,
+        choicesCount: (choices || []).length,
+        hasCorrectLetter: !!correctLetter,
+        hasExplanation: !!explanationText,
+        choiceExpsCount: !!choiceExps ? Object.keys(choiceExps).length : 0,
+        testIdForClient,
+        questionId: String(questionId || ''),
+        isLast
+      });
+      const secondsFromStart = req.session?.testStartTime ? Math.round((Date.now() - req.session.testStartTime)/1000) : 0;
+      console.log('⏱️ Seconds from start (server calc):', secondsFromStart);
+      console.groupEnd();
+
+      const choiceRows = (choices || []).map((txt, i) => {
+        const letter = String.fromCharCode(65 + i);
+        const checked = savedForThisQ === letter ? 'checked' : '';
+        return `
+          <label class="opt">
+            <input type="radio" name="answer" value="${letter}" ${checked} />
+            <span class="num">${i + 1}.</span>
+            <span class="txt">${String(txt || '')}</span>
+          </label>
+        `;
+      }).join('');
+
+      const html = `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>${title} — Question ${questionIndex + 1}</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <style>
+    :root{ --blue:#0f5da6; --blueDark:#0b2b46; --blueLt:#eaf2fb; --ink:#0f1f3e; --ring:#e5e7eb; --bg:#fff; }
+    *{box-sizing:border-box}
+    body{margin:0;font-family:Arial,Helvetica,sans-serif;color:var(--ink);background:var(--bg);font-size:14px;line-height:1.55}
+    .barTop{background:var(--blue);color:#fff;display:flex;align-items:center;gap:12px;padding:8px 16px;font-weight:600}
+    .barTop .title{flex:1}
+    .barTop .center{flex:1;text-align:center;opacity:.95}
+    .barTop .right{margin-left:auto;display:flex;gap:16px;align-items:center}
+    .barUtil{background:var(--blueLt);color:#0b2b46;display:flex;align-items:center;gap:12px;padding:8px 16px;border-bottom:1px solid var(--ring)}
+    .utilLeft{display:flex;gap:10px;align-items:center}
+    .utilRight{margin-left:auto;display:flex;gap:16px;align-items:center}
+    .utilLink{display:inline-flex;gap:8px;align-items:center;text-decoration:none;color:inherit;font-weight:600}
+    .wrap{max-width:1280px;margin:14px auto 86px;padding:0 24px}
+    .grid{display:grid;grid-template-columns:minmax(720px, 840px) 1fr;column-gap:24px;align-items:start}
+    .leftCol{min-width:720px}
+    .rightPane{border-left:2px solid #dfe6ef;padding-left:20px;min-height:420px;position:sticky; top:72px;max-height:calc(100vh - 110px);overflow:auto;background:#fff}
+    .tabs{display:flex;gap:10px;margin:10px 0 8px;border-bottom:1px solid #eee;padding-bottom:6px}
+    .tab{background:transparent;border:none;padding:6px 10px;border-radius:0;cursor:pointer;font-weight:700;color:#0b2b46}
+    .tab.active{border-bottom:2px solid #0b2b46}
+    .tabBody{border:none;border-radius:0;padding:0;margin:0}
+    .tabBody p{margin:0 0 8px}
+    .itemHead{font-size:13px;color:#64748b;margin-top:12px}
+    .stemLead{font-size:15px;font-weight:700;margin:6px 0 4px}
+    .promptRow{display:flex;gap:8px;align-items:flex-start;margin:14px 0}
+    .caret{color:#2e6ea0;font-weight:700}
+    .prompt{font-weight:700}
+    .opts{margin-top:8px;display:flex;flex-direction:column;gap:8px}
+    .opt{display:flex;gap:10px;align-items:flex-start;border:none;border-radius:0;padding:0;cursor:pointer}
+    .opt input{margin-top:4px}
+    .num{width:22px;color:#334155}
+    .txt{flex:1}
+    .submitRow{margin-top:12px}
+    .btn{display:inline-flex;align-items:center;gap:8px;border:none;border-radius:6px;padding:9px 16px;font-weight:700;cursor:pointer;text-decoration:none}
+    .btn.primary{background:var(--blue);color:#fff}
+    .btn.primary:hover{filter:brightness(.95)}
+    .meta{margin-top:10px;color:#6b7280;font-size:12px;display:flex;gap:8px;flex-wrap:wrap}
+    .meta .dot{opacity:.6}
+    .exp h3{margin:0 0 10px;font-size:15px;font-weight:800}
+    .exp .ok{color:#16a34a;font-weight:800}
+    .exp .err{color:#b91c1c;font-weight:800}
+    .exp p{margin:0 0 10px}
+    .muted{color:#6b7280}
+    .rationales{margin-top:8px}
+    .rationales details{margin:6px 0}
+    .bottom{position:fixed;left:0;right:0;bottom:0;background:var(--blueDark);color:#e6f2ff;display:flex;align-items:center;gap:12px;padding:10px 14px}
+    .leftActions{display:flex;gap:10px}
+    .rightActions{margin-left:auto;display:flex;gap:10px}
+    .btnLow{background:#143a66;color:#fff;border:none;border-radius:6px;padding:8px 12px;display:flex;gap:8px;align-items:center;text-decoration:none;font-weight:700}
+    .btnLow[disabled]{opacity:.5;cursor:not-allowed}
+    @media (max-width:860px){.grid{grid-template-columns:1fr}.leftCol{min-width:0}.rightPane{position:static;max-height:none;border-left:none;padding-left:0;border-top:1px solid #dfe6ef;padding-top:16px;margin-top:6px}}
+  </style>
+</head>
+<body>
+  <div class="barTop">
+    <div class="title">${title}</div>
+    <div class="center">Bootcamp.com</div>
+    <div class="right"><span>⏱️ <span id="topTime">00:00</span></span><span>🧮 Question ${questionIndex + 1}</span></div>
+  </div>
+  <div class="barUtil">
+    <div class="utilLeft"><a href="#" class="utilLink" id="calcBtn">🧮 Calculator</a></div>
+    <div class="utilRight">
+      <a href="#" class="utilLink" id="settingsBtn">⚙️ Settings</a>
+      <a href="#" class="utilLink" id="markBtn">🔖 Mark for Review</a>
     </div>
-    <div class="main">
-      <h3>👥 ${test.title} – User Attempts Overview</h3>
-      <p style="font-size: 14px; color: #555;">Showing the most recent attempt from each user.</p>
-      <table>
-        <thead><tr><th>User</th><th>Score</th><th>Correct</th><th>Latest Attempt</th><th></th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
+  </div>
+
+  <div class="wrap">
+    <div class="grid">
+      <div class="leftCol">
+        <div class="itemHead">Item ${questionIndex + 1}</div>
+        <div class="stemLead">The nurse in the emergency department cares for a 38-year-old male client.</div>
+
+        <div class="tabs">
+          <button class="tab active" data-tab="notes">Nurses' Notes</button>
+          <button class="tab" data-tab="vitals">Vital Signs</button>
+        </div>
+
+        <div class="tabBody" id="tab-notes">${scenario}</div>
+        <div class="tabBody" id="tab-vitals" style="display:none">${vitals}</div>
+
+        <div class="promptRow"><span class="caret">▸</span><div class="prompt">${prompt}</div></div>
+
+        <form id="qaForm">
+          <div class="opts">${choiceRows || '<p class="muted">No choices provided.</p>'}</div>
+          <div class="submitRow"><button class="btn primary" type="submit">Submit</button></div>
+        </form>
+
+        <div class="meta">
+          <span>0 / 1 Incorrect</span><span class="dot">•</span>
+          <span>55% Answered Correctly</span><span class="dot">•</span>
+          <span>0 / 1 Scoring Rule</span><span class="dot">•</span>
+          <span><b id="timeSpent">00:00</b> Time Spent</span>
+        </div>
+      </div>
+
+      <div class="rightPane">
+        <div id="explain" class="exp">
+          <p class="muted">Submit your answer to see the explanation.</p>
+        </div>
+      </div>
     </div>
-  </body></html>`);
+  </div>
+
+  <div class="bottom">
+    <div class="leftActions">
+      <a class="btnLow" href="#" id="endBtn">⏩ End</a>
+      <a class="btnLow" href="#" id="pauseBtn">⏸️ Pause</a>
+    </div>
+    <div class="rightActions">
+      ${questionIndex > 0
+        ? `<a class="btnLow" href="/start-test/${testIdForClient}?index=${questionIndex - 1}" id="prevBtn">◀ Previous</a>`
+        : `<button class="btnLow" disabled id="prevBtn">◀ Previous</button>`}
+      <a class="btnLow" href="#" id="navBtn">🧭 Navigate</a>
+      ${isLast
+        ? `<a class="btnLow" href="/submit-test-final/${testIdForClient}" id="finishBtn">Finish ▶</a>`
+        : `<a class="btnLow" href="/start-test/${testIdForClient}?index=${questionIndex + 1}" id="nextBtn">Next ▶</a>`}
+    </div>
+  </div>
+
+  <script>
+    console.groupCollapsed('🌐 Client boot');
+    console.log('questionIndex', ${questionIndex});
+    console.log('testId', ${JSON.stringify(testIdForClient)});
+    console.log('questionId', ${JSON.stringify(questionId)});
+    console.log('ANSWER_KEY', ${JSON.stringify(correctLetter)});
+    console.log('CHOICE_EXPS keys', Object.keys(${JSON.stringify(choiceExps || {})}));
+    console.groupEnd();
+
+    // Tabs
+    const tButtons = document.querySelectorAll('.tab');
+    const notes = document.getElementById('tab-notes');
+    const vitals = document.getElementById('tab-vitals');
+    tButtons.forEach(b=>{
+      b.addEventListener('click',()=>{
+        tButtons.forEach(x=>x.classList.remove('active'));
+        b.classList.add('active');
+        const which=b.getAttribute('data-tab');
+        if(which==='notes'){notes.style.display='block'; vitals.style.display='none';}
+        else {vitals.style.display='block'; notes.style.display='none';}
+        console.log('🧭 Tab switch →', which);
+      });
+    });
+
+    // Timers
+    const testStart=${req.session.testStartTime || Date.now()};
+    const qStart = Date.now();
+    function fmt(s){const m=Math.floor(s/60),x=s%60;return (m<10?'0':'')+m+':' + (x<10?'0':'')+x;}
+    function tick(){
+      const now=Date.now();
+      const total=Math.floor((now-testStart)/1000);
+      const top=document.getElementById('topTime'); if(top) top.textContent=fmt(total);
+      const sp=document.getElementById('timeSpent'); if(sp) sp.textContent=fmt(Math.floor((Date.now()-qStart)/1000));
+    }
+    setInterval(tick,1000); tick();
+
+    // Elements
+    const nextBtn = document.getElementById('nextBtn');
+    const prevBtn = document.getElementById('prevBtn');
+    const finishBtn = document.getElementById('finishBtn');
+
+    function currentChoice(){
+      const r = document.querySelector('input[name="answer"]:checked');
+      return r ? r.value : '';
+    }
+    function addAutosaveParams(url, finish){
+      const u = new URL(url, window.location.origin);
+      const chosen = currentChoice(); // letter or ''
+      const elapsedSec = Math.floor((Date.now()-qStart)/1000);
+      u.searchParams.set('prevQid', ${JSON.stringify(questionId)});
+      if (chosen) u.searchParams.set('chosen', chosen);
+      u.searchParams.set('elapsedSec', String(elapsedSec));
+      if (finish) u.searchParams.set('finish', '1');
+      return u.toString();
+    }
+
+    nextBtn?.addEventListener('click', (e)=>{
+      e.preventDefault();
+      const href = nextBtn.getAttribute('href');
+      const url = addAutosaveParams(href, false);
+      console.log('➡️ Next (autosave) →', url);
+      window.location.href = url;
+    });
+
+    prevBtn?.addEventListener('click', (e)=>{
+      e.preventDefault();
+      const href = prevBtn.getAttribute('href');
+      const url = addAutosaveParams(href, false);
+      console.log('⬅️ Prev (autosave) →', url);
+      window.location.href = url;
+    });
+
+    finishBtn?.addEventListener('click', (e)=>{
+      e.preventDefault();
+      // Hop through /start-test one last time to save, then server redirects to /submit-test-final
+      const href = \`/start-test/${testIdForClient}?index=${questionIndex}\`;
+      const url = addAutosaveParams(href, true);
+      console.log('🏁 Finish (autosave) →', url);
+      window.location.href = url;
+    });
+
+    // Submit (explanation-on-page) unchanged; does not navigate
+    const form = document.getElementById('qaForm');
+    form?.addEventListener('submit', async (e)=>{
+      e.preventDefault();
+      const chosen = currentChoice();
+      const box = document.getElementById('explain');
+      if(!chosen){
+        box.innerHTML = '<p class="muted">Please select an answer.</p>';
+        return;
+      }
+      const isCorrect = ${JSON.stringify(correctLetter)} && chosen === ${JSON.stringify(correctLetter)};
+      const htmlBody = (${JSON.stringify(explanationText || '')})
+        .replace(/\\n\\n/g, '</p><p>')
+        .replace(/\\n/g, '<br>');
+      box.innerHTML = \`
+        <h3>Explanation</h3>
+        <p><span class="\${isCorrect ? 'ok' : 'err'}">\${isCorrect ? 'Correct' : 'Incorrect'}</span>
+        — Your answer: <b>\${chosen}</b>. Correct answer: <b>${normalizedCorrect ?? '?'}</b>.</p>
+        <p>\${htmlBody || '<span class="muted">No explanation provided.</span>'}</p>
+      \`;
+    });
+  </script>
+</body>
+</html>`;
+
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      console.log('📤 Sending HTML response. Length (chars):', html.length);
+      res.send(html);
+      console.log('✅ /start-test HTML sent in', Date.now() - t0, 'ms');
+    }
+
+    // Render now
+    render({
+      title: test.title || 'NCLEX-RN Test (Tutored, Untimed)',
+      scenario: q.scenario || '<p><b>Emergency Department</b></p><p><b>1830:</b> Scenario not provided.</p>',
+      vitals: q.vitals || '<p class="muted">No vital signs provided.</p>',
+      prompt: q.title || '',
+      choices: q.choices || [],
+      correctLetter: normalizedCorrect,
+      explanationText: q.generalExplanation || q.explanation || '',
+      choiceExps,
+      testIdForClient: testId,
+      questionId: q._id,
+      isLast
+    });
+
+    console.log('✅ /start-test rendered OK in', Date.now() - t0, 'ms');
+  } catch (err) {
+    console.error('💥 GET /start-test error (will render demo):', err);
+
+    // Minimal demo fallback
+    const demo = {
+      title: 'NCLEX-RN Test (Demo — offline)',
+      scenario: '<p><b>Emergency Department</b></p><p><b>1830:</b> Client presents with abdominal discomfort, mild fever, and nausea.</p>',
+      vitals: '<p><b>Temp:</b> 38.1°C &nbsp; <b>HR:</b> 102 &nbsp; <b>BP:</b> 118/76 &nbsp; <b>RR:</b> 20 &nbsp; <b>SpO₂:</b> 97%</p>',
+      prompt: 'Which action should the nurse take first?',
+      choices: [
+        'Administer prescribed antiemetic.',
+        'Initiate IV access and obtain labs.',
+        'Provide clear liquid diet as tolerated.',
+        'Assess for rebound tenderness and guarding.'
+      ],
+      correctLetter: 'B',
+      explanationText: 'Airway/Breathing/Circulation and diagnostic readiness...',
+      choiceExps: { A:'...', B:'...', C:'...', D:'...' }
+    };
+
+    // Very small HTML to keep server alive
+    res.status(200).send(`<pre>Demo fallback loaded.\n${JSON.stringify(demo, null, 2)}</pre>`);
+  }
+});
+
+// POST — background save of an answer while user stays on the page
+app.post('/api/test-progress/answer', async (req, res) => {
+  const t0 = Date.now();
+  const userId = req.session?.userId || null;
+  const { testId, questionId, chosen, elapsedSec = 0, marked = false } = req.body || {};
+
+  console.log('\n===== [ROUTE HIT] POST /api/test-progress/answer =====');
+  console.log('👤 userId:', userId);
+  console.log('📥 body:', { testId, questionId, chosen, elapsedSec, marked });
+
+  // init session stores
+  if (!req.session.answers) req.session.answers = {};
+  if (!req.session.questionTimes) req.session.questionTimes = {};
+  if (!req.session.testStartTime) req.session.testStartTime = Date.now();
+
+  // helper — normalize any input to a LETTER
+  const toLetter = (val, choicesLen) => {
+    if (val == null) return null;
+    const s = String(val).trim();
+    if (/^[A-Za-z]$/.test(s)) return s.toUpperCase();
+    const n = parseInt(s, 10);
+    if (!isNaN(n)) {
+      if (n >= 0 && n < choicesLen) return String.fromCharCode(65 + n);   // 0->A
+      if (n >= 1 && n <= choicesLen) return String.fromCharCode(64 + n);  // 1->A
+    }
+    return null;
+  };
+
+  try {
+    if (!testId || !questionId) {
+      console.warn('⚠️ Missing testId/questionId');
+      return res.status(400).json({ ok: false, error: 'Missing testId or questionId' });
+    }
+
+    // Load question (need choices length to normalize and to bump choiceCounts)
+    const q = await Question.findById(questionId);
+    if (!q) {
+      console.warn('⚠️ Question not found:', questionId);
+      return res.status(404).json({ ok: false, error: 'Question not found' });
+    }
+
+    const letter = toLetter(chosen, (q.choices || []).length);
+    if (!letter) {
+      console.warn('⚠️ Invalid chosen value, not saving:', chosen);
+      return res.status(400).json({ ok: false, error: 'Invalid chosen value' });
+    }
+
+    // Save into session (source of truth for grading)
+    req.session.answers[`q_${questionId}`] = letter;
+    req.session.questionTimes[questionId] = Number.isFinite(elapsedSec) ? Math.max(0, elapsedSec) : 0;
+
+    console.log('💾 Session save:', {
+      key: `q_${questionId}`,
+      letter,
+      elapsedSec: req.session.questionTimes[questionId],
+      answersCount: Object.keys(req.session.answers).length
+    });
+
+    // Best-effort bump of choiceCounts
+    try {
+      if (!Array.isArray(q.choiceCounts) || q.choiceCounts.length !== q.choices.length) {
+        q.choiceCounts = Array(q.choices.length).fill(0);
+      }
+      const idx = letter.charCodeAt(0) - 65;
+      if (idx >= 0 && idx < q.choiceCounts.length) {
+        q.choiceCounts[idx]++;
+        await q.save();
+        console.log('📊 choiceCounts incremented for', letter, '→', q.choiceCounts[idx]);
+      } else {
+        console.warn('⚠️ Letter index out of range for choiceCounts:', letter);
+      }
+    } catch (bumpErr) {
+      console.warn('📊 choiceCounts update failed (ignored):', bumpErr?.message || bumpErr);
+    }
+
+    console.log('✅ /api/test-progress/answer ok in', Date.now() - t0, 'ms');
+    return res.json({
+      ok: true,
+      saved: { testId, questionId, letter, elapsedSec: req.session.questionTimes[questionId], marked: !!marked },
+      sessionCounts: {
+        answers: Object.keys(req.session.answers).length,
+        times: Object.keys(req.session.questionTimes).length
+      }
+    });
+  } catch (err) {
+    console.error('💥 /api/test-progress/answer error:', err);
+    return res.status(500).json({ ok: false, error: 'Server error' });
+  }
 });
 
 
+// POST – submit one question answer
+app.post('/submit-question', async (req, res) => {
+  const { testId, questionId, index, answer } = req.body;
+  const currentIndex = parseInt(index, 10);
+  const userId = req.session.userId;
 
-app.get('/admin/masterclass', async (req, res) => {
-  const results = await Result.find().populate('userId');
-  const users = await User.find().sort({ name: 1 });
-  const tests = await Test.find().sort({ createdAt: -1 });
-
-  const userStats = {};
-  results.forEach(r => {
-    const userId = r.userId?._id.toString();
-    if (!userStats[userId]) userStats[userId] = { name: r.userId?.name || 'Unknown', lastScore: r.score };
+  console.log("\n===== [ROUTE HIT] POST /submit-question =====");
+  console.log("📦 Body:", { testId, questionId, index, answer });
+  console.log("💾 Session (before):", {
+    hasAnswers: !!req.session.answers,
+    answers: req.session.answers,
+    questionTimes: req.session.questionTimes
   });
 
-  const chartLabels = Object.values(userStats).map(u => `'${u.name}'`).join(', ');
-  const chartData = Object.values(userStats).map(u => u.lastScore).join(', ');
+  // Save answer in session
+  if (!req.session.answers) req.session.answers = {};
 
-  const userCards = users.map(u => {
-    const resultMatches = results.filter(r => r.userId?._id.toString() === u._id.toString());
-    const totalTests = resultMatches.length;
-    const latestScore = resultMatches[0]?.score || '—';
+  // Normalize letter + text
+  const question = await Question.findById(questionId);
+  if (!question) {
+    console.error("❌ Question not found:", questionId);
+    return res.status(404).send("Question not found");
+  }
 
-    return `
-      <div style="display:flex; align-items:center; justify-content:space-between; background:#fff; padding:16px; border-radius:8px; box-shadow:0 1px 3px rgba(0,0,0,0.08); margin:10px 0">
-        <div style="display:flex; align-items:center; gap:12px;">
-          <div style="width:40px; height:40px; background:#cce; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:bold; font-size:14px;">
-            ${u.name?.charAt(0) || '?'}
-          </div>
-          <div>
-            <div style="font-weight:bold; font-size:15px;">${u.name}</div>
-            <div style="color:#888; font-size:13px;">${u.email}</div>
-          </div>
-        </div>
-        <div style="font-size:13px; color:#333;">${new Date(u.createdAt).toLocaleDateString()}</div>
-        <div style="font-size:13px; color:#333;">${totalTests}</div>
-        <div style="font-size:13px; color:#333;">${latestScore}</div>
-      </div>
-    `;
-  }).join('');
+  const answerIdx = answer.charCodeAt(0) - 65;
+  const selectedText = question.choices[answerIdx] || null;
 
-  const liveNow = users.filter(u => {
-    const last = new Date(u.lastActive);
-    return (Date.now() - last.getTime()) <= 3 * 60 * 1000;
-  }).slice(0, 5);
+  req.session.answers[`q_${questionId}`] = {
+    letter: answer,
+    text: selectedText
+  };
 
-  const liveUsersHtml = liveNow.map(u => `
-    <div style="margin-bottom:10px; padding:10px; background:#e7ffe7; border-radius:6px; font-size:13px;">
-      <strong>${u.name}</strong><br>
-      ${u.email}<br>
-      Last Seen: ${new Date(u.lastActive).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-    </div>
-  `).join('');
+  console.log("📝 Saved to session:", req.session.answers[`q_${questionId}`]);
 
-  const notLive = users.filter(u => {
-    const last = new Date(u.lastActive);
-    return (Date.now() - last.getTime()) > 3 * 60 * 1000;
-  }).slice(0, 3);
+  try {
+    // Update vote counts
+    if (!Array.isArray(question.choiceCounts) || question.choiceCounts.length !== question.choices.length) {
+      question.choiceCounts = Array(question.choices.length).fill(0);
+    }
+    question.choiceCounts[answerIdx]++;
+    await question.save();
 
-  const notLiveHtml = notLive.map(u => `
-    <div style="margin-bottom:10px; padding:10px; background:#f0f0f0; border-radius:6px; font-size:13px;">
-      <strong>${u.name}</strong><br>
-      ${u.email}<br>
-      Last Seen: ${new Date(u.lastActive).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-    </div>
-  `).join('');
+    console.log("📊 Updated choiceCounts:", question.choiceCounts);
 
-  const latestTest = results.sort((a, b) => b.createdAt - a.createdAt)[0];
-  const latestTestTitle = tests.find(t => t._id.toString() === latestTest?.testId.toString())?.title || '—';
-  const latestTestCount = results.filter(r => r.testId.toString() === latestTest?.testId.toString()).length;
+    // Track timing
+    const now = Date.now();
+    const questionStart = req.session.questionStartTime || now;
+    const testStart = req.session.testStartTime || now;
+    const timeSpent = Math.floor((now - questionStart) / 1000);
+    const totalTime = Math.floor((now - testStart) / 1000);
 
-  const lastTestHtml = `
-    <div style="margin-top:30px; padding:10px; background:#fef6e4; border-radius:6px; font-size:13px;">
-      <strong>🧪 Last Test Accessed</strong><br>
-      Title: ${latestTestTitle}<br>
-      Total Students: ${latestTestCount}
-    </div>
-  `;
+    if (!req.session.questionTimes) req.session.questionTimes = {};
+    req.session.questionTimes[questionId] = timeSpent;
 
-  // SECTION 6: Daily Question Submission Graph
-  const dailyQuestionCounts = await Question.aggregate([
-    {
-      $group: {
-        _id: {
-          year: { $year: '$createdAt' },
-          month: { $month: '$createdAt' },
-          day: { $dayOfMonth: '$createdAt' }
-        },
-        count: { $sum: 1 }
-      }
-    },
-    { $sort: { '_id.year': 1, '_id.month': 1, '_id.day': 1 } }
-  ]);
+    console.log(`⏱️ Time on question ${questionId}: ${timeSpent}s`);
+    console.log(`⏱️ Total test time so far: ${totalTime}s`);
 
-  const qLabels = dailyQuestionCounts.map(d => `'${d._id.month}/${d._id.day}'`).join(', ');
-  const qData = dailyQuestionCounts.map(d => d.count).join(', ');
-
-  const miniGraphHtml = `
-    <div style="margin-top:30px; padding:10px; background:#eef2fb; border-radius:6px;">
-      <strong>📈 Questions Created per Day</strong>
-      <canvas id="questionGraph" height="150"></canvas>
-    </div>
-  `;
-
-  res.send(`<!DOCTYPE html><html><head><title>Masterclass Analytics</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels"></script>
-    <style>
-      body { margin: 0; font-family: Arial; background: #f8f9fb; display: flex; }
-      .sidebar {
-        width: 220px;
-        background: #fff;
-        padding: 20px;
-        border-right: 1px solid #ddd;
-        height: 100vh;
-      }
-      .rightbar {
-        width: 220px;
-        background: #fff;
-        padding: 20px;
-        border-left: 1px solid #ddd;
-        height: 100vh;
-        overflow-y: auto;
-      }
-      .sidebar h2 {
-        font-size: 18px;
-        margin-bottom: 20px;
-        color: #0f1f3e;
-      }
-      .sidebar nav {
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-      }
-      .sidebar nav .section-title {
-        margin-top: 15px;
-        margin-bottom: 6px;
-        font-size: 13px;
-        font-weight: bold;
-        color: #666;
-        text-transform: uppercase;
-        border-bottom: 1px solid #ddd;
-        padding-bottom: 4px;
-      }
-      .sidebar nav a {
-        text-decoration: none;
-        color: #0f1f3e;
-        font-size: 14px;
-        padding-left: 10px;
-      }
-      .sidebar nav a:hover {
-        text-decoration: underline;
-      }
-      .main-content {
-        flex: 1;
-        padding: 40px;
-        background: #fff;
-        overflow-y: auto;
-      }
-      h3 { color: #0f1f3e; }
-      .chart-container {
-        margin: 40px 0;
-        padding: 20px;
-        background: white;
-        border-radius: 10px;
-        box-shadow: 0 0 6px rgba(0,0,0,0.1);
-        height: 500px;
-      }
-      .user-list {
-        margin-top: 40px;
-      }
-    </style></head><body>
-    <div class="sidebar">
-      <h2>🩻 Radiography</h2>
-      <nav>
-        <div class="section-title">Analytics</div>
-        <a href="/admin/dashboard">📊 Dashboard</a>
-        <a href="/admin/test-analytics">📈 Test Analytics</a>
-        <a href="/admin/user-analytics">👥 User Analytics</a>
-        <a href="/admin/question-analytics">❓ Question Analytics</a>
-        <a href="/admin/masterclass" style="font-weight:bold;">🎓 Masterclass</a>
-      </nav>
-    </div>
-    <div class="main-content">
-      <section>
-        <h3>🎓 Masterclass – User Last Scores Overview</h3>
-        <div class="chart-container">
-          <canvas id="userChart"></canvas>
-        </div>
-      </section>
-      <section>
-        <h3>👥 Users Overview</h3>
-        <div class="user-list">
-          ${userCards}
-        </div>
-      </section>
-    </div>
-    <div class="rightbar">
-      <h3 style="font-size:16px; color:#1a358d; margin-bottom:10px;">🟢 Top 5 Live Users</h3>
-      ${liveUsersHtml || '<p style="font-size:13px; color:#888;">No active users right now.</p>'}
-
-      <h3 style="font-size:16px; color:#1a358d; margin-top:30px;">🔘 Recently Seen (Not Live)</h3>
-      ${notLiveHtml || '<p style="font-size:13px; color:#888;">No inactive users available.</p>'}
-
-      ${lastTestHtml}
-      ${miniGraphHtml}
-    </div>
-
-    <script>
-      const ctx = document.getElementById('userChart').getContext('2d');
-      new Chart(ctx, {
-        type: 'bar',
-        data: {
-          labels: [${chartLabels}],
-          datasets: [{
-            label: 'Last Test Score',
-            data: [${chartData}],
-            backgroundColor: '#9ACD32'
-          }]
-        },
-        options: {
-          indexAxis: 'y',
-          responsive: true,
-          plugins: {
-            datalabels: {
-              anchor: 'end',
-              align: 'right',
-              color: '#000',
-              font: { weight: 'bold' },
-              formatter: (val, ctx) => ctx.chart.data.labels[ctx.dataIndex]
-            },
-            legend: { display: false },
-            tooltip: { enabled: true }
-          },
-          scales: {
-            x: { beginAtZero: true, ticks: { color: '#333' } },
-            y: { ticks: { color: '#333' } }
+    // Update progress
+    if (userId) {
+      const totalQuestions = await Question.countDocuments({ testId });
+      await TestProgress.findOneAndUpdate(
+        { userId, testId },
+        {
+          $set: {
+            index: currentIndex,
+            total: totalQuestions,
+            updatedAt: new Date(),
+            status: 'active'
           }
         },
-        plugins: [ChartDataLabels]
-      });
+        { upsert: true }
+      );
+      console.log("👤 TestProgress updated:", { userId, testId, index: currentIndex });
+    }
+  } catch (err) {
+    console.error("❌ Error in submit-question:", err);
+  }
 
-      new Chart(document.getElementById('questionGraph').getContext('2d'), {
-        type: 'line',
-        data: {
-          labels: [${qLabels}],
-          datasets: [{
-            label: 'Questions',
-            data: [${qData}],
-            borderColor: '#1a358d',
-            backgroundColor: 'rgba(26, 53, 141, 0.1)',
-            fill: true
-          }]
-        },
-        options: {
-          responsive: true,
-          scales: {
-            x: { ticks: { color: '#555' } },
-            y: { beginAtZero: true, ticks: { color: '#555' } }
-          }
-        }
-      });
-    </script>
-  </body></html>`);
+  // Redirect to next question or finalize
+  const totalQuestions = await Question.countDocuments({ testId });
+  if (currentIndex + 1 >= totalQuestions) {
+    console.log("➡️ All questions answered. Redirecting to finalize test.");
+    return res.redirect(`/submit-test-final/${testId}`);
+  }
+
+  console.log("➡️ Redirecting to next question:", currentIndex + 1);
+  return res.redirect(`/start-test/${testId}?index=${currentIndex + 1}`);
 });
 
 
 
-app.get('/admin/live-users', async (req, res) => {
-  console.log('📡 /admin/live-users route hit');
+// ✅ Middleware to ensure user is logged in
+function requireLogin(req, res, next) {
+  if (!req.session.userId) {
+    console.log('🔒 No session found — redirecting to /login');
+    return res.redirect('/login');
+  }
+  console.log('✅ User session:', req.session.userId);
+  next();
+}
+app.post('/submit-question/:testId/:qid', async (req, res) => {
+  const routeT0 = Date.now();
+  console.log("\n===== [ROUTE HIT] POST /submit-question =====");
 
-  const threeMinutesAgo = new Date(Date.now() - 3 * 60 * 1000);
-  const users = await User.find().sort({ lastSeen: -1 });
+  const { testId, qid } = req.params;
+  const userId = req.session.userId || null;
+  const selectedAnswer = req.body.answer || '';
+  const timeSpent = req.body.timeSpent || 0;
 
-  const rows = users.map(user => {
-    const isLive = user.lastActive && user.lastActive >= threeMinutesAgo;
-    const lastSeenFormatted = user.lastSeen
-      ? new Date(user.lastSeen).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      : 'N/A';
+  if (!req.session.answers) req.session.answers = {};
+  if (!req.session.questionTimes) req.session.questionTimes = {};
+
+  req.session.answers[`q_${qid}`] = selectedAnswer;
+  req.session.questionTimes[qid] = timeSpent;
+
+  console.log("📩 Params:", { testId, qid });
+  console.log("💾 Saved to session:", {
+    selectedAnswer,
+    timeSpent,
+    totalAnswers: Object.keys(req.session.answers).length
+  });
+
+  // 👉 Check progress
+  const totalQuestions = await Question.countDocuments({ testId });
+  const answeredCount = Object.keys(req.session.answers).length;
+
+  console.log(`📊 Progress: ${answeredCount}/${totalQuestions} answered`);
+
+  // 🟢 If last question → finalize
+  if (answeredCount >= totalQuestions) {
+    console.log("🎯 Last question reached. Finalizing test...");
+
+    const gradeT0 = Date.now();
+    const questions = await Question.find({ testId }).sort({ _id: 1 });
+    console.log("🗂️ CRUD READ Question.find in", Date.now() - gradeT0, "ms", { count: questions.length });
+
+    let correctCount = 0;
+    const detailedResults = [];
+
+    for (const question of questions) {
+      const qid = question._id.toString();
+      const selected = req.session.answers[`q_${qid}`] || '';
+      const correct = question.correctAnswer || '';
+      const isCorrect = selected === correct;
+      const tSpent = req.session.questionTimes[qid] || 0;
+      if (isCorrect) correctCount++;
+
+      detailedResults.push({
+        questionId: qid,
+        selectedAnswer: selected,
+        correctAnswer: correct,
+        isCorrect,
+        timeSpent: tSpent
+      });
+
+      console.log("📝 Graded question:", { qid, selected, correct, isCorrect, tSpent });
+    }
+
+    const totalTime = req.session.testStartTime
+      ? Math.floor((Date.now() - new Date(req.session.testStartTime)) / 1000)
+      : 0;
+    console.log("⏱️ Total test time:", totalTime, "seconds");
+
+    const resultDoc = {
+      userId,
+      testId,
+      score: Math.round((correctCount / questions.length) * 100),
+      totalQuestions: questions.length,
+      correctAnswers: correctCount,
+      detailedResults,
+      timeTaken: totalTime
+    };
+    console.log("💾 Preparing Result:", resultDoc);
+
+    const saveT0 = Date.now();
+    const result = new Result(resultDoc);
+    await result.save();
+    console.log("✅ Result saved in", Date.now() - saveT0, "ms", { resultId: result._id });
+
+    // cleanup
+    delete req.session.answers;
+    delete req.session.questionTimes;
+    delete req.session.testStartTime;
+    console.log("🧹 Session cleaned");
+
+    console.log("➡️ Redirecting to /performance?lastTestId=", testId);
+    console.log("✅ /submit-question completed in", Date.now() - routeT0, "ms");
+    return res.redirect(`/performance?lastTestId=${testId}`);
+  }
+
+  // 🟡 Otherwise → move to next question
+  const nextIndex = parseInt(req.body.nextIndex || '0', 10);
+  console.log("➡️ Redirecting to next question index:", nextIndex);
+  console.log("✅ /submit-question completed in", Date.now() - routeT0, "ms");
+  res.redirect(`/start-test/${testId}?index=${nextIndex}`);
+});
+
+
+
+// GET – finalize a test, grade answers, save Result, redirect to performance
+// GET – finalize a test, grade answers, save Result, redirect to performance
+// GET — finalize test, grade from session, persist Result, redirect to /performance
+app.get('/submit-test-final/:testId', async (req, res) => {
+  const t0 = Date.now();
+  const { testId } = req.params;
+  const userId = req.session?.userId || null;
+
+  console.log('\n===== [ROUTE HIT] GET /submit-test-final =====');
+  console.log('👤 userId:', userId, '🧪 testId:', testId);
+
+  // helper
+  const toLetter = (val, choicesLen) => {
+    if (val == null) return null;
+    const s = String(val).trim();
+    if (/^[A-Za-z]$/.test(s)) return s.toUpperCase();
+    const n = parseInt(s, 10);
+    if (!isNaN(n)) {
+      if (n >= 0 && n < choicesLen) return String.fromCharCode(65 + n);   // 0->A
+      if (n >= 1 && n <= choicesLen) return String.fromCharCode(64 + n);  // 1->A
+    }
+    return null;
+  };
+
+  try {
+    const answers = req.session?.answers || {};
+    const times = req.session?.questionTimes || {};
+    console.log('💾 Session answers (raw keys):', Object.keys(answers));
+    console.log('💾 Session times keys:', Object.keys(times));
+
+    console.time('🗂️ Load questions');
+    const questions = await Question.find({ testId }).sort({ _id: 1 }).lean();
+    console.timeEnd('🗂️ Load questions');
+    console.log('🧾 Questions loaded:', questions.length);
+
+    if (!questions.length) {
+      console.warn('⚠️ No questions found for test:', testId);
+      return res.status(404).send('No questions for this test.');
+    }
+
+    let correctCount = 0;
+    const detailedResults = [];
+
+    for (const q of questions) {
+      const qid = String(q._id);
+      const saved = answers[`q_${qid}`] || null; // should already be a LETTER
+      const correctLetter = toLetter(q.correctAnswer, (q.choices || []).length) || '';
+      const isCorrect = !!saved && saved === correctLetter;
+      const tSpent = times[qid] || 0;
+
+      if (isCorrect) correctCount++;
+
+      const selectedText = saved
+        ? (q.choices || [])[saved.charCodeAt(0) - 65] || null
+        : null;
+
+      detailedResults.push({
+        questionId: qid,
+        selectedLetter: saved,
+        selectedText,
+        correctLetter,
+        correctText: (q.choices || [])[correctLetter ? correctLetter.charCodeAt(0) - 65 : -1] || null,
+        isCorrect,
+        timeSpent: tSpent
+      });
+
+      console.log('📝 Graded:', { qid, saved, correctLetter, isCorrect, tSpent });
+    }
+
+    const totalTime = req.session?.testStartTime
+      ? Math.max(0, Math.floor((Date.now() - Number(req.session.testStartTime)) / 1000))
+      : 0;
+
+    const scorePct = Math.round((correctCount / questions.length) * 100);
+
+    const resultDoc = {
+      userId,
+      testId,
+      score: scorePct,
+      totalQuestions: questions.length,
+      correctAnswers: correctCount,
+      detailedResults,
+      timeTaken: totalTime,
+      createdAt: new Date()
+    };
+
+    const result = new Result(resultDoc);
+    await result.save();
+
+    console.log('✅ Result saved:', { resultId: result._id, score: result.score, correctAnswers: result.correctAnswers });
+
+    // cleanup only test-specific keys
+    delete req.session.answers;
+    delete req.session.questionTimes;
+    delete req.session.testStartTime;
+
+    console.log('🧹 Session cleared (test keys)');
+    console.log('➡️ Redirecting to /performance?lastTestId=', testId, ' in', Date.now() - t0, 'ms');
+
+    return res.redirect(`/performance?lastTestId=${testId}`);
+  } catch (err) {
+    console.error('💥 Error finalizing test:', err);
+    return res.status(500).send('Error finalizing test');
+  }
+});
+
+
+
+
+// When user selects answer
+app.post('/save-answer/:testId/:questionId', (req, res) => {
+  const { testId, questionId } = req.params;
+  const { answer } = req.body;
+
+  if (!req.session.answers) req.session.answers = {};
+  if (!req.session.answers[testId]) req.session.answers[testId] = {};
+
+  req.session.answers[testId][questionId] = answer;
+
+  console.log("💾 Saved answer", { testId, questionId, answer });
+  res.json({ ok: true });
+});
+
+
+/*  test center aand landing page */
+
+app.get('/', (req, res) => {
+  res.send(`
+  <!doctype html>
+  <html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Radiography Practice Exam Platform</title>
+    <style>
+      :root{
+        --brand:#1a358d;   /* nav high-end blue (or pick your brand color) */
+        --accent:#2e6ea0;  /* accent blue */
+        --ink:#1f2937;
+        --ring:#e5e7eb;
+        --bg:#f7f7f7;
+        --card:#ffffff;
+      }
+
+      *{ box-sizing:border-box }
+      body{ margin:0; font-family: Arial, sans-serif; background:var(--bg); color:var(--ink); }
+      h2{ font-size:2rem; margin:0 0 12px; }
+      p{ line-height:1.6; }
+
+      /* ===== Top maroon (now blue) band ===== */
+      .topband{ background:var(--brand); color:#fff; }
+      .topband-in{ max-width:1200px; margin:0 auto; padding:0 30px; display:flex; align-items:center; gap:20px; }
+      .tabs{ display:flex; align-items:center; gap:24px; height:44px; }
+      .tabs a{ display:flex; align-items:center; justify-content:center; height:100%; padding:0 14px; text-decoration:none; font-weight:700; font-size:14px; color:#fff; border-radius:6px 6px 0 0; }
+      .tabs a.active{ background:#fff; color:var(--ink); border-bottom:1px solid #fff; position:relative; z-index:2; }
+      .top-right{ margin-left:auto; display:flex; align-items:center; gap:16px; font-size:14px; opacity:.95; }
+      .flag{ width:18px; height:12px; background:#d00; border:2px solid #fff; border-radius:2px; display:inline-block }
+      .bridge{ height:1px; background:#fff; }
+
+      /* ===== Subheader + category row ===== */
+      .subhead{ background:#fff; border-bottom:1px solid var(--ring); }
+      .subhead-in{ max-width:1200px; margin:0 auto; padding:16px 30px; display:flex; align-items:center; gap:20px; }
+      .logo-word{ font-size:28px; font-weight:900; color:var(--accent); letter-spacing:.4px; }
+      .search-wrap{ margin-left:auto; display:flex; align-items:center; gap:12px; }
+      .search{ display:flex; align-items:center; gap:10px; padding:10px 14px; border:1px solid #e2e6ef; border-radius:24px; width:360px; background:#fff; }
+      .search input{ border:0; outline:none; width:100%; background:transparent; font-size:15px; color:#374151; font-style:italic; }
+      .icon{ width:34px; height:34px; border:1px solid #e2e6ef; border-radius:50%; display:grid; place-items:center; color:var(--accent); font-weight:900; }
+
+      .catnav{ background:#fff; border-bottom:1px solid var(--ring); }
+      .catnav-in{ max-width:1200px; margin:0 auto; padding:10px 30px; display:flex; gap:20px; flex-wrap:wrap; font-weight:600; }
+      .catnav-in a{ color:#374151; text-decoration:none; }
+
+      /* ===== HERO ===== */
+      .hero-wrap{ background:var(--bg); }
+      .hero-in{ max-width:1200px; margin:0 auto; padding:40px 30px; }
+      .main{ display:flex; gap:24px; }
+      .left-panel{ flex:2; padding:40px; background:#fff; border:1px solid var(--ring); border-radius:8px; }
+      .left-panel h1{ color:var(--accent); font-size:2rem; margin-bottom:10px; }
+      .left-panel p{ font-size:1rem; margin-bottom:20px; color:#222; }
+      .cta{ background:var(--brand); color:#fff; padding:12px 20px; text-decoration:none; border-radius:6px; font-weight:700; display:inline-block; }
+
+      .right-panel{ flex:1; background:#fff; padding:24px; border:1px solid var(--ring); border-radius:8px; }
+      .right-panel h3{ margin-top:0; }
+      .form-group{ margin-bottom:12px; }
+      .form-group input{ width:100%; padding:10px; border:1px solid #ccc; border-radius:4px; }
+      .btn{ width:100%; padding:12px; background:var(--brand); color:#fff; border:none; border-radius:6px; font-size:1rem; font-weight:700; }
+
+      /* ===== Sections / cards ===== */
+      .section{ max-width:1200px; margin:60px auto; padding:0 30px; }
+      .grid-3{ display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:20px; }
+      .grid-2{ display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:24px; }
+      .card{ background:var(--card); border:1px solid var(--ring); border-radius:10px; box-shadow:0 1px 4px rgba(0,0,0,0.05); }
+      .card-in{ padding:20px; }
+      .feature{ padding:18px; border-radius:10px; background:#fff; border:1px solid var(--ring); }
+      .feature h3{ margin:0 0 6px; font-size:1.1rem; }
+      .tags{ display:flex; gap:8px; flex-wrap:wrap; }
+      .tag{ background:#fff; border:1px solid var(--ring); border-radius:999px; padding:6px 10px; font-size:.9rem; }
+
+      /* ===== WHITE ZONE ===== */
+      .white-zone{ background:#fff; }
+
+      /* more components */
+      .split{ display:grid; grid-template-columns:1.1fr .9fr; gap:28px; align-items:center; }
+      .split img{ width:100%; height:auto; border-radius:10px; box-shadow:0 10px 28px rgba(0,0,0,.1); }
+      .q-card{ background:#fff; border:1px solid var(--ring); border-radius:10px; padding:18px; }
+      .choices{ display:grid; gap:10px; margin-top:10px; }
+      .choice{ padding:10px; border:1px solid #d6dae3; border-radius:8px; }
+      .choice.correct{ border-color:#18a35a; background:#edfbf3; }
+      .rationale{ margin-top:10px; font-size:.95rem; color:#0f5132; }
+      .stats{ display:grid; grid-template-columns:repeat(auto-fit, minmax(220px,1fr)); gap:16px; }
+      .stat{ background:#fff; border:1px solid var(--ring); border-radius:10px; padding:16px; text-align:center; }
+      .stat b{ display:block; font-size:28px; }
+      .people{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:18px; }
+      .person{ background:#fff; border:1px solid var(--ring); border-radius:12px; padding:16px; text-align:center; }
+      .avatar{ width:76px; height:76px; border-radius:50%; background:#e9ecf5; margin:0 auto 10px; display:grid; place-items:center; font-weight:700; color:#64748b; }
+      .timeline{ display:grid; gap:14px; }
+      .step{ background:#fff; border:1px solid var(--ring); border-radius:10px; padding:14px 16px; }
+      .testimonials{ display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:20px; }
+      .testimonial{ background:#fff; padding:20px; border-radius:10px; border:1px solid var(--ring); font-style:italic; }
+      .by{ margin-top:8px; color:#6b7280; font-style:normal; }
+      .pricing{ display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:20px; }
+      .price-card{ background:#fff; padding:22px; border-radius:12px; border:2px solid var(--ring); text-align:center; }
+      .price{ font-size:32px; font-weight:800; margin:6px 0 2px; }
+      .small{ font-size:.9rem; color:#6b7280; }
+      .table-wrap{ overflow:auto; background:#fff; border:1px solid var(--ring); border-radius:10px; }
+      table{ border-collapse:collapse; width:100%; min-width:680px; }
+      th, td{ border-bottom:1px solid var(--ring); padding:12px 14px; text-align:left; }
+      th{ background:#fafafa; }
+      .faq-item{ background:#fff; padding:15px; border-radius:10px; border:1px solid var(--ring); margin-bottom:10px; }
+      .cta-band{ background:var(--accent); color:#fff; text-align:center; padding:50px 20px; border-radius:12px; }
+      .cta-band .cta{ background:#fff; color:var(--accent); }
+      .blog{ display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:18px; }
+      .post{ background:#fff; border:1px solid var(--ring); border-radius:10px; padding:16px; }
+      .contact{ display:grid; grid-template-columns:1.1fr .9fr; gap:18px; }
+      .contact form .row{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+      .input, textarea{ width:100%; padding:10px; border:1px solid #cfd5e1; border-radius:8px; }
+      textarea{ min-height:110px; }
+      footer{ text-align:center; padding:18px; background:#f1f1f1; font-size:0.9rem; color:#555; border-top:1px solid #ddd; }
+
+      @media (max-width: 900px){
+        .search{ width:220px }
+        .main{ flex-direction:column }
+        .split{ grid-template-columns:1fr }
+        .contact{ grid-template-columns:1fr }
+      }
+    </style>
+  </head>
+  <body>
+
+    <!-- Top band -->
+    <div class="topband">
+      <div class="topband-in">
+        <nav class="tabs" id="tabs">
+          <a href="#" class="active">Students</a>
+          <a href="#">Educators</a>
+          <a href="#">Clinics</a>
+          <a href="#">Continuing Education</a>
+          <a href="#">About</a>
+          <a href="#">Resources</a>
+        </nav>
+        <div class="top-right">
+          <span>Exam Offers</span><span class="flag" aria-hidden="true"></span><span>English</span>
+        </div>
+      </div>
+      <div class="bridge"></div>
+    </div>
+
+    <!-- Subheader -->
+    <div class="subhead">
+      <div class="subhead-in">
+        <div class="logo-word">Radiography Practice Exams</div>
+        <div class="search-wrap">
+          <label class="search">
+            <input type="text" placeholder="Search exams, topics, or tips"/><span aria-hidden="true">🔍</span>
+          </label>
+          <span class="icon" title="Locations">📍</span>
+          <span class="icon" title="Help">❓</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Category row -->
+    <div class="catnav">
+      <div class="catnav-in">
+        <a href="/test-center">Practice Exams</a>
+        <a href="/user/results">My Results</a>
+        <a href="/study-guides">Study Guides</a>
+        <a href="/pricing">Pricing</a>
+        <a href="/help">Help</a>
+      </div>
+    </div>
+
+    <!-- HERO (light grey background) -->
+    <div class="hero-wrap">
+      <div class="hero-in">
+        <div class="main">
+          <div class="left-panel">
+            <h1>Pass Your Radiography Certification</h1>
+            <p>Access a comprehensive library of practice exams for ARRT®/CAMRT Radiography. Simulate real test timing, review image-based explanations, and track weak areas with analytics.</p>
+            <a href="/test-center" class="cta">Start Your First Practice Exam</a>
+          </div>
+
+          <!-- EMAIL-ONLY SIGN IN -->
+          <div class="right-panel">
+            <h3>Sign in to Your Exam Account</h3>
+            <form id="emailSignInForm" autocomplete="email">
+              <div class="form-group">
+                <input type="email" name="email" id="signinEmail" placeholder="Email Address" required>
+              </div>
+              <button type="submit" class="btn">Sign In</button>
+            </form>
+            <p style="margin-top:10px; font-size:0.9rem;">
+              New to the platform? <a href="/register">Create your free exam account</a>
+            </p>
+            <div id="signinMsg" style="margin-top:8px; font-size:.9rem; color:#b32833;"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- WHITE ZONE: everything else -->
+    <div class="white-zone">
+      <section class="section">
+        <h2>Built by technologists, engineered for exam day</h2>
+        <p>We combine realistic, image-heavy questions with instant feedback and performance analytics so you always know what to study next.</p>
+        <div class="grid-3">
+          <div class="feature"><h3>Real Exam Simulation</h3><p>Timed and untimed modes mirror ARRT®/CAMRT structure, including image-based items and mixed difficulty.</p></div>
+          <div class="feature"><h3>Granular Analytics</h3><p>See item difficulty, topic breakdowns, and time-per-question to focus where it matters most.</p></div>
+          <div class="feature"><h3>Explain Like an Instructor</h3><p>Clear rationales and references after each question build understanding, not just memory.</p></div>
+        </div>
+        <div class="tags" style="margin-top:14px;">
+          <span class="tag">Positioning</span><span class="tag">Radiation Protection</span><span class="tag">Physics</span>
+          <span class="tag">Anatomy</span><span class="tag">Pathology</span><span class="tag">Quality Control</span>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="split">
+          <img src="/chest.jpg" alt="Exam interface screenshot (question & image viewer)">
+          <div>
+            <h2>Feels like the real exam—only smarter</h2>
+            <p>Flag questions for review, view images fullscreen, and switch between timed or study modes. Your progress auto-saves so you can resume anytime.</p>
+            <ul>
+              <li>Question review mode with rationales and references</li>
+              <li>Keyboard shortcuts for faster navigation</li>
+              <li>Mobile-friendly interface</li>
+            </ul>
+            <a href="/test-center" class="cta" style="margin-top:10px">Browse Practice Exams</a>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Try a sample question</h2>
+        <div class="q-card">
+          <strong>A PA chest projection demonstrates the clavicles projecting above the apices. What positioning error is most likely?</strong>
+          <div class="choices">
+            <div class="choice">A) Insufficient SID</div>
+            <div class="choice correct">B) Patient was lordotic (chin/chest raised)</div>
+            <div class="choice">C) Excessive rotation toward the left</div>
+            <div class="choice">D) Incorrect central ray angle caudad</div>
+          </div>
+          <div class="rationale">Correct: <b>B</b>. Lordotic positioning elevates clavicles, projecting them above lung apices. Ensure chin lowered and shoulders rolled forward.</div>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Outcomes that matter</h2>
+        <div class="stats">
+          <div class="stat"><b>1,200+</b>Image-based items</div>
+          <div class="stat"><b>95%</b>Report higher confidence</div>
+          <div class="stat"><b>24/7</b>Access on any device</div>
+          <div class="stat"><b>Real-time</b>Analytics & trends</div>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Know exactly where to focus</h2>
+        <div class="grid-2">
+          <div class="card"><div class="card-in"><h3>Topic heatmaps</h3><p>See accuracy by topic and projection to prioritize study time.</p></div></div>
+          <div class="card"><div class="card-in"><h3>Timing insights</h3><p>Identify questions that consistently take longer than average.</p></div></div>
+          <div class="card"><div class="card-in"><h3>Distractor analysis</h3><p>Review which wrong choices you pick most and why.</p></div></div>
+          <div class="card"><div class="card-in"><h3>Progress trends</h3><p>Track improvement week over week to stay on pace.</p></div></div>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Meet your instructors</h2>
+        <div class="people">
+          <div class="person"><div class="avatar">DT</div><b>Doung Tran, MRT(R)</b><div class="small">Positioning & QC</div></div>
+          <div class="person"><div class="avatar">CH</div><b>Cathy Hu, BSc, MRT(R)</b><div class="small">Physics & Protection</div></div>
+          <div class="person"><div class="avatar">JS</div><b>Jordan Singh, RT(R)</b><div class="small">Anatomy & Pathology</div></div>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Your 4-week game plan</h2>
+        <div class="timeline">
+          <div class="step"><b>Week 1:</b> Baseline timed exam + review rationales. Identify top 3 weak areas.</div>
+          <div class="step"><b>Week 2:</b> Drill targeted sets on weak topics. Study mode with notes.</div>
+          <div class="step"><b>Week 3:</b> Mix of timed and untimed. Focus on pacing & image interpretation.</div>
+          <div class="step"><b>Week 4:</b> Full mock exam + final review of flagged questions.</div>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>What students say</h2>
+        <div class="testimonials">
+          <div class="testimonial">“The image explanations finally made positioning ‘click.’ The analytics showed exactly what to fix before exam day.”<div class="by">— Doung T.</div></div>
+          <div class="testimonial">“The simulator felt like the real test. Reviewing every wrong answer with references was huge.”<div class="by">— Cathy H.</div></div>
+          <div class="testimonial">“Went from 62% to 83% in three weeks. Timing charts helped me stop rushing.”<div class="by">— Priya R.</div></div>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Choose your plan</h2>
+        <div class="pricing">
+          <div class="price-card">
+            <h3>Free</h3>
+            <div class="price">$0</div>
+            <div class="small">Starter access</div>
+            <ul style="text-align:left; line-height:1.6;">
+              <li>2 practice exams</li>
+              <li>Basic analytics</li>
+              <li>Limited explanations</li>
+            </ul>
+            <a href="/register" class="cta" style="margin-top:10px;">Get Started</a>
+          </div>
+          <div class="price-card">
+            <h3>Pro</h3>
+            <div class="price">$29/mo</div>
+            <div class="small">Most popular</div>
+            <ul style="text-align:left; line-height:1.6;">
+              <li>Unlimited exams</li>
+              <li>Full explanations & references</li>
+              <li>Advanced analytics</li>
+            </ul>
+            <a href="/pricing" class="cta" style="margin-top:10px;">Upgrade</a>
+          </div>
+          <div class="price-card">
+            <h3>Premium</h3>
+            <div class="price">$49/mo</div>
+            <div class="small">For power users</div>
+            <ul style="text-align:left; line-height:1.6;">
+              <li>Everything in Pro</li>
+              <li>Priority support</li>
+              <li>Extra image libraries</li>
+            </ul>
+            <a href="/pricing" class="cta" style="margin-top:10px;">Go Premium</a>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>How we compare</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Feature</th><th>Our Platform</th><th>Generic Question Bank</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>Image-based items</td><td>Extensive, exam-style</td><td>Limited or none</td></tr>
+              <tr><td>Explanations</td><td>Instructor-written with references</td><td>Short or missing</td></tr>
+              <tr><td>Analytics</td><td>Topic, timing, distractor analysis</td><td>Basic scoring only</td></tr>
+              <tr><td>Exam Simulation</td><td>Timed/untimed, flags, review</td><td>Static quizzes</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Frequently asked questions</h2>
+        <div class="faq-item"><h3>Is this affiliated with ARRT® or CAMRT®?</h3><p>No. We are independent and our content is aligned to publicly available blueprints.</p></div>
+        <div class="faq-item"><h3>Can I cancel anytime?</h3><p>Yes—subscriptions are month-to-month.</p></div>
+        <div class="faq-item"><h3>Do you offer group pricing?</h3><p>Yes—contact us for educator/clinic plans.</p></div>
+      </section>
+
+      <section class="section">
+        <h2>Latest study tips</h2>
+        <div class="blog">
+          <div class="post"><b>Mastering chest positioning</b><p class="small">Landmarks, rotation checks, and common pitfalls.</p><a href="/blog/chest-positioning" class="cta" style="padding:8px 12px; font-size:.95rem;">Read</a></div>
+          <div class="post"><b>Beat the clock: pacing strategies</b><p class="small">How to avoid spending too long on image-heavy items.</p><a href="/blog/pacing" class="cta" style="padding:8px 12px; font-size:.95rem;">Read</a></div>
+          <div class="post"><b>Radiation protection myths</b><p class="small">What matters, what doesn’t, and how it’s tested.</p><a href="/blog/protection-myths" class="cta" style="padding:8px 12px; font-size:.95rem;">Read</a></div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="cta-band">
+          <h2>Your Essential Training & Exam Prep for ARRT®/CAMRT Radiography</h2>
+          <p>Start free, then upgrade when you’re ready. No credit card needed to practice.</p>
+          <a href="/register" class="cta">Create Free Account</a>
+        </div>
+      </section>
+    </div><!-- /white-zone -->
+
+    <footer>
+      © 2025 Radiography Practice Exam Platform — Prepare · Practice · Succeed
+    </footer>
+
+    <script>
+      // visual tab toggle only
+      document.querySelectorAll('#tabs a').forEach(a => {
+        a.addEventListener('click', e => {
+          e.preventDefault();
+          document.querySelectorAll('#tabs a').forEach(t => t.classList.remove('active'));
+          a.classList.add('active');
+        });
+      });
+
+      // email-only sign-in → redirect to /test-center if email exists
+      const signInForm = document.getElementById('emailSignInForm');
+      if (signInForm) {
+        signInForm.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const email = document.getElementById('signinEmail').value.trim();
+          const msg = document.getElementById('signinMsg');
+          msg.textContent = '';
+
+          if (!email) { msg.textContent = 'Please enter your email.'; return; }
+
+          try {
+            const res = await fetch('/signin-email', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ email })
+            });
+            const data = await res.json();
+
+            if (data.success) {
+              window.location.href = '/test-center';
+            } else {
+              msg.textContent = data.message || 'Email not found. Please create an account.';
+            }
+          } catch (err) {
+            msg.textContent = 'Something went wrong. Please try again.';
+          }
+        });
+      }
+    </script>
+  </body>
+  </html>
+  `);
+});
+
+// ✅ Test Center Route
+app.get('/test-center', requireLogin, async (req, res) => {
+  const tests = await Test.find().sort({ createdAt: -1 });
+  const now = new Date();
+
+  // ⚠️ Admin message (could later come from DB)
+  const adminMessage = "⚠️ Scheduled maintenance on Sunday 10 PM - 12 AM. Please save progress.";
+
+  // ⏱️ Calculate time window
+  function timeWindow(createdAt, limitMinutes = 60) {
+    const totalMs = limitMinutes * 60_000;
+    const end = new Date(createdAt.getTime() + totalMs);
+    const msLeft = end - now;
+    const msUsed = Math.max(0, Math.min(totalMs, totalMs - msLeft));
+    const pctUsed = Math.round((msUsed / totalMs) * 100);
+
+    let label;
+    if (msLeft <= 0) label = '⏳ expired';
+    else {
+      const mins = Math.floor(msLeft / 60_000);
+      const hrs = Math.floor(mins / 60);
+      const days = Math.floor(hrs / 24);
+      const parts = [];
+      if (days > 0) parts.push(`${days}d`);
+      if (hrs % 24 > 0) parts.push(`${hrs % 24}h`);
+      if (mins % 60 > 0) parts.push(`${mins % 60}m`);
+      label = `⏳ ${parts.join(' ')} left`;
+    }
+    return { msLeft, pctUsed, label };
+  }
+
+  // 🎨 Status color logic
+  function statusColor(msLeft, isActive) {
+    if (!isActive) return '#9aa0a6';        // gray for inactive
+    if (msLeft <= 0) return '#d93025';      // red for expired
+    if (msLeft <= 15 * 60_000) return '#f9ab00'; // yellow for almost over
+    return '#1a73e8';                       // blue for normal
+  }
+
+  // 🧮 Days left helper
+  function daysLeftLabel(date) {
+    const diffMs = date - now;
+    const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+    if (diffDays < 0) return '⏳ passed';
+    if (diffDays === 0) return '⏳ today';
+    return `${diffDays}d left`;
+  }
+
+  // 📝 Build sidebar exam grid
+  const examGrid = tests.map(t => {
+    const dateStr = t.createdAt.toLocaleDateString('en-US', {
+      month: 'short', day: '2-digit', year: 'numeric'
+    });
+    return `<div>📅 ${dateStr} – ${daysLeftLabel(t.createdAt)}</div>`;
+  }).join('');
+
+  // 📝 Build table rows
+  const rows = tests.map(t => {
+    const isActive = t.isActive !== false;
+    const win = timeWindow(t.createdAt, t.timeLimit || 60);
+    const color = statusColor(win.msLeft, isActive);
 
     return `
-      <tr style="background-color: ${isLive ? '#e6f4ea' : '#fff'}">
-        <td>${user.name}</td>
-        <td>${user.email}</td>
+      <tr class="grid-row">
+        <td style="border-left:4px solid ${color}">
+          <strong>${t.title}</strong><br>
+          <span class="desc">${t.description || '— No description —'}</span>
+        </td>
+        <td>${t.createdAt.toISOString().split('T')[0]}</td>
+        <td>—</td>
         <td>
-          ${isLive
-            ? `🟢 Live <span style="color:#666;font-size:12px;">(${lastSeenFormatted})</span>`
-            : `🔴 Last Seen: <span style="color:#666;">${lastSeenFormatted}</span>`
-          }
+          <div class="progress-bar">
+            <div class="progress-fill" style="width:${win.pctUsed}%"></div>
+          </div>
+          <div class="small-text">${win.pctUsed}% used · ${win.label}</div>
+        </td>
+        <td style="text-align:right">
+          <form action="/start-test/${t._id}" method="GET">
+            <button class="start-btn" ${!isActive ? 'disabled' : ''}>
+              ▶️ ${isActive ? 'Start' : 'Locked'}
+            </button>
+          </form>
         </td>
       </tr>
     `;
   }).join('');
 
-  res.send(`<!DOCTYPE html><html><head><title>Live Users</title>
-    <style>
-      body{margin:0;font-family:Arial;background:#f8f9fb;display:flex}
-      .sidebar{width:220px;background:#fff;padding:20px;height:100vh;border-right:1px solid #ddd}
-      .sidebar h2{font-size:18px;margin-bottom:20px;color:#0f1f3e}
-      .sidebar nav{display:flex;flex-direction:column;gap:8px}
-      .sidebar nav .section-title{margin-top:15px;margin-bottom:6px;font-size:13px;font-weight:bold;color:#666;text-transform:uppercase;border-bottom:1px solid #ddd;padding-bottom:4px}
-      .sidebar nav a{text-decoration:none;color:#0f1f3e;font-size:14px;padding-left:10px}
-      .sidebar nav a:hover{text-decoration:underline}
-      .main{flex:1;padding:40px;background:#fff}
-      h3{color:#0f1f3e}
-      table{width:100%;border-collapse:collapse;background:#fff;margin-top:20px}
-      th,td{padding:10px 12px;text-align:left;border-bottom:1px solid #e0e0e0;font-size:14px}
-      th{background:#f4f4f4}
-      .refresh-btn {
-        margin-top: 10px;
-        padding: 8px 16px;
-        background: #1a358d;
-        color: white;
-        border: none;
-        border-radius: 4px;
-        cursor: pointer;
-      }
-      .refresh-btn:hover { background: #0f275f; }
-    </style></head><body>
-      <div class="sidebar">
-        <h2>🩻 Radiography</h2>
-        <nav>
-          <div class="section-title">Management</div>
-          <a href="/admin/dashboard">📊 Dashboard</a>
-          <a href="/admin/tests">📋 Manage Tests</a>
-          <a href="/admin/create-test">➕ Create Test</a>
-          <a href="/admin/questions">🧠 Manage Questions</a>
-          <a href="/upload-form">📤 Upload Excel</a>
-          <div class="section-title">Analytics</div>
-          <a href="/admin/test-analytics">📈 Test Analytics</a>
-          <a href="/admin/user-analytics" style="font-weight:bold;">👥 User Analytics</a>
-          <a href="/admin/question-analytics">❓ Question Analytics</a>
-        </nav>
+  // 📤 Render page
+  res.send(`
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Radiography Assistant – Test Center</title>
+  <style>
+    :root{
+      --ink:#0f1f3e; --bg:#f8f9fb; --muted:#777;
+      --card:#fff; --line:#ddd; --thead:#f8fafc;
+      --primary:#1a73e8;
+    }
+    body{ margin:0; font-family:Arial,sans-serif; display:flex; background:var(--bg); color:var(--ink); }
+
+    /* Sidebar */
+    .sidebar{ width:220px; background:#fff; padding:20px; height:100vh;
+      display:flex; flex-direction:column; justify-content:space-between; border-right:1px solid #ddd; }
+    .sidebar h2{ font-size:18px; margin:0 0 20px; }
+    
+    /* Grid for exam dates */
+    .exam-grid {
+      display:grid;
+      grid-template-columns:1fr;
+      gap:6px;
+      margin:10px 0 20px;
+      font-size:13px;
+    }
+    .exam-grid div {
+      padding:6px 8px;
+      border:1px solid #ddd;
+      border-radius:4px;
+      background:#f9f9f9;
+      text-align:center;
+    }
+
+    .logout-form{ margin-top:auto; }
+    .logout-form button{ background:#d9534f; color:#fff; border:none; border-radius:6px;
+      padding:8px 16px; font-weight:bold; cursor:pointer; }
+    .logout-form button:hover{ background:#c9302c; }
+
+    /* Main */
+    .main{ flex:1; background:#fff; display:flex; flex-direction:column; }
+
+    .admin-bar{
+      display:flex; justify-content:space-between; align-items:center;
+      background:#f1f1f1; color:#0f1f3e;
+      padding:8px 20px;
+      border-top:1px solid #ddd;
+      border-bottom:1px solid #ddd;
+    }
+    .admin-bar button{
+      background:#0f1f3e; color:#fff; border:none; border-radius:6px;
+      padding:4px 10px;
+      cursor:pointer; font-weight:bold; font-size:12px;
+    }
+    .admin-bar button:hover{ background:#333; }
+
+    .navbar{
+      display:flex; gap:12px; align-items:center;
+      padding:10px 20px; margin:0;
+      border-bottom:1px solid rgba(0,0,0,0.08);
+    }
+    .navbar button{
+      background:#f4f6f9; border:1px solid #ddd; border-radius:6px;
+      padding:6px 14px; font-size:14px; cursor:pointer;
+    }
+    .navbar button:hover{ background:#e9ebf0; }
+
+    .card{ background:#0f1f3e; color:#fff; padding:24px 20px; border-radius:0; margin:0; }
+
+    h2{ margin:18px 0 8px; padding:0 20px; }
+
+    .hr-accent{ height:4px; background:var(--primary); border-radius:999px; margin:8px 20px 18px; }
+
+    table {
+      width: 100%;
+      margin: 0;
+      border-collapse: collapse;
+      background: #fff;
+      font-family: system-ui, Arial, sans-serif;
+    }
+    thead th {
+      background: #fff;
+      color: #000;
+      font-weight: bold;
+      font-size: 14px;
+      padding: 10px 12px;
+      text-align: left;
+      border-bottom: 1px solid #ddd;
+    }
+    td {
+      padding: 10px 12px;
+      font-size: 14px;
+      border-bottom: 1px solid #eee;
+      vertical-align: middle;
+    }
+    tr:hover { background: #fafafa; }
+
+    .progress-bar { width: 120px; height: 10px; background: #e9ecef; }
+    .progress-fill { height: 100%; background: #007bff; }
+    .small-text { font-size: 12px; color: #555; margin-top: 4px; }
+
+    .start-btn {
+      background: #007bff; border: 1px solid #007bff;
+      font-size: 13px; padding: 5px 12px;
+      color: #fff; cursor: pointer; font-weight: 600; border-radius: 0;
+    }
+    .start-btn:hover { background: #0056b3; }
+    .start-btn[disabled] { background: #ccc; border-color: #ccc; color: #666; cursor: not-allowed; }
+
+    .desc{ font-size:12px; color:var(--muted); }
+  </style>
+</head>
+<body>
+  <div class="sidebar">
+    <div>
+      <h2>🩻 Radiography</h2>
+      <p style="font-size:13px; color:#555; margin-top:12px; line-height:1.4;">
+        Stay on top of your upcoming exams. Track <strong>days left</strong>, review your <strong>last scores</strong>,<br>
+        and keep improving with each practice session. 📈
+        <hr>
+        <strong>Total Tests Available: ${tests.length}</strong>
+      </p>
+      <div class="exam-grid">
+        ${examGrid}
       </div>
-      <div class="main">
-        <h3>👥 Live Users (Last 3 Minutes)</h3>
-        <button onclick="location.reload()" class="refresh-btn">🔄 Refresh</button>
-        <table>
-          <thead><tr><th>Name</th><th>Email</th><th>Status</th></tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>
-    </body></html>`);
+    </div>
+
+    <form class="logout-form" action="/logout" method="POST">
+      <button type="submit">🚪 Logout</button>
+    </form>
+  </div>
+
+  <div class="main">
+    <div class="admin-bar">
+      <div>${adminMessage}</div>
+      <button onclick="navigator.clipboard.writeText('${adminMessage}')">Copy</button>
+    </div>
+
+    <div class="card">
+      <h3 style="margin:0 0 8px">Welcome to the Weekly Radiography Exam Center</h3>
+      <p style="margin:0">
+        ✅ Practice tests based on clinical imaging routines<br>
+        ✅ Reinforce your anatomy, positioning, and critique skills<br>
+        ✅ Monitor your performance and improve each week
+      </p>
+    </div>
+
+    <div class="navbar">
+      <button onclick="location.href='/dashboard'">🏠 Dashboard</button>
+      <button onclick="location.href='/results'">📊 Results</button>
+      <button onclick="location.href='/practice'">📝 Practice</button>
+      <button onclick="location.href='/settings'">⚙️ Settings</button>
+    </div>
+
+    <h2>📋 Available Tests</h2>
+    <div class="hr-accent"></div>
+    <table>
+      <thead>
+        <tr><th>Test</th><th>Date</th><th>Positioning</th><th>Technique</th><th></th></tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  </div>
+</body>
+</html>
+  `);
 });
 
 
-app.get('/admin/live-progress', async (req, res) => {
-  const FIVE_MIN = 5 * 60 * 1000;
-  const now = new Date();
-  const progressList = await TestProgress.find({
-    status: 'active',
-    updatedAt: { $gte: new Date(now - FIVE_MIN) }
-  }).populate('userId testId');
 
-  const rows = progressList.length
-    ? progressList.map(p => {
-        const percent = p.total > 0 ? Math.round(100 * p.index / p.total) : 0;
-        const lastSeenFormatted = p.updatedAt
-          ? new Date(p.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-          : 'N/A';
-        return `
-          <tr style="background-color: ${percent === 100 ? '#e6f4ea' : '#fff'}">
-            <td>${p.userId?.name || 'Unknown'}</td>
-            <td>${p.testId?.title || ''}</td>
-            <td>
-              <div style="width:110px;height:16px;background:#eee;border-radius:6px;overflow:hidden;display:inline-block;vertical-align:middle;">
-                <div style="width:${percent}%;height:100%;background:#28a745;"></div>
-              </div>
-              <span style="font-size:13px;vertical-align:middle;margin-left:3px;">${percent}%</span>
-            </td>
-            <td>Q${p.index + 1} / ${p.total}</td>
-            <td>
-              <span style="color:#666;font-size:13px;">${lastSeenFormatted}</span>
-            </td>
+
+/* ========================================================================== *
+ * performance (TAKING & FLOW)
+ *   GET  /performance 
+ * Notes: /start-test normalizes correctAnswer to letter; stores timing in session.
+ * ========================================================================== */
+
+
+
+
+// Convenience: allow /performance/:testId and redirect to query version
+app.get('/performance/:testId', requireLogin, (req, res) => {
+  return res.redirect(`/performance?lastTestId=${req.params.testId}`);
+});
+
+app.get('/performance', requireLogin, async (req, res) => {
+  const userId = req.session.userId;
+  const lastTestId = (req.query.lastTestId || '').trim();
+
+  console.log('\n===== [ROUTE HIT] GET /performance =====');
+  console.log('👤 userId:', userId, '🧪 lastTestId:', lastTestId || '(none)');
+
+  // Pull all results for this user
+  const results = await Result.find({ userId })
+    .populate('testId')
+    .sort({ createdAt: -1 })
+    .lean();
+
+  const totalTests = results.length;
+  const sumScores = results.reduce((s, r) => s + (r.score || 0), 0);
+  const sumCorrect = results.reduce((s, r) => s + (r.correctAnswers || 0), 0);
+  const sumQuestions = results.reduce((s, r) => s + (r.totalQuestions || 0), 0);
+  const sumTime = results.reduce((s, r) => s + (r.timeTaken || 0), 0);
+
+  const lastScore = totalTests ? (results[0].score || 0) : 0;
+  const avgScore = totalTests ? Math.round(sumScores / totalTests) : 0;
+  const bestScore = results.reduce((m, r) => Math.max(m, r.score || 0), 0);
+  const coverage = sumQuestions ? Math.round((sumCorrect / sumQuestions) * 100) : 0;
+  const avgTimeMin = totalTests ? Math.round((sumTime / totalTests) / 60) : 0;
+
+  // Build table rows
+  const rows = results.map((r, i) => {
+    const isHighlight = lastTestId && String(r.testId?._id || '') === lastTestId;
+    const td = (secs) => `${Math.floor(secs / 60)}m ${secs % 60}s`;
+    const dateStr = new Date(r.createdAt).toLocaleDateString();
+    return `
+      <tr class="grid-row ${isHighlight ? 'hl' : ''}" data-tid="${r.testId?._id || ''}">
+        <td>${i + 1}</td>
+        <td>${r.testId?.title || 'Untitled'}</td>
+        <td>${r.score}%</td>
+        <td>${r.correctAnswers}/${r.totalQuestions}</td>
+        <td>${td(r.timeTaken || 0)}</td>
+        <td>${dateStr}</td>
+      </tr>
+    `;
+  }).join('');
+
+  res.send(`
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Radiography Assistant – My Performance</title>
+  <style>
+    :root{
+      --ink:#0f1f3e; --bg:#f8f9fb; --muted:#777;
+      --card:#fff; --line:#ddd; --thead:#f8fafc;
+      --primary:#1a73e8;
+    }
+    *{box-sizing:border-box}
+    body{ margin:0; font-family:Arial,Helvetica,sans-serif; display:flex; background:var(--bg); color:var(--ink); }
+
+    /* Sidebar (reused style) */
+    .sidebar{ width:220px; background:#fff; padding:20px; height:100vh;
+      display:flex; flex-direction:column; justify-content:space-between; border-right:1px solid #ddd; }
+    .sidebar h2{ font-size:18px; margin:0 0 12px; }
+    .s-mini{ font-size:13px; color:#555; line-height:1.45; }
+    .s-kpis{ display:grid; gap:8px; margin-top:10px; font-size:13px; }
+    .s-kpis div{ background:#f9f9f9; border:1px solid #e5e7eb; border-radius:6px; padding:8px 10px; }
+
+    .logout-form{ margin-top:auto; }
+    .logout-form button{ background:#d9534f; color:#fff; border:none; border-radius:6px;
+      padding:8px 16px; font-weight:bold; cursor:pointer; }
+    .logout-form button:hover{ background:#c9302c; }
+
+    /* Main & header bars (same tone as Test Center) */
+    .main{ flex:1; background:#fff; display:flex; flex-direction:column; }
+    .admin-bar{
+      display:flex; justify-content:space-between; align-items:center;
+      background:#f1f1f1; color:#0f1f3e;
+      padding:8px 20px;
+      border-top:1px solid #ddd;
+      border-bottom:1px solid #ddd;
+    }
+    .admin-bar button{
+      background:#0f1f3e; color:#fff; border:none; border-radius:6px;
+      padding:4px 10px; cursor:pointer; font-weight:bold; font-size:12px;
+    }
+    .admin-bar button:hover{ background:#333; }
+
+    .navbar{
+      display:flex; gap:12px; align-items:center;
+      padding:10px 20px; margin:0;
+      border-bottom:1px solid rgba(0,0,0,0.08);
+    }
+    .navbar button{
+      background:#f4f6f9; border:1px solid #ddd; border-radius:6px;
+      padding:6px 14px; font-size:14px; cursor:pointer;
+    }
+    .navbar button:hover{ background:#e9ebf0; }
+
+    .card{ background:#0f1f3e; color:#fff; padding:24px 20px; border-radius:0; margin:0; }
+    h2{ margin:18px 0 8px; padding:0 20px; }
+
+    .hr-accent{ height:4px; background:var(--primary); border-radius:999px; margin:8px 20px 18px; }
+
+    /* KPI cards grid */
+    .cards{ display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:16px; padding:0 20px; }
+    .kcard{ background:#fff; border:1px solid #e5e7eb; border-radius:10px; padding:16px; }
+    .kcard h3{ margin:0 0 8px; font-size:12px; color:#6b7280; font-weight:700; letter-spacing:.2px; }
+    .kcard b{ font-size:22px; }
+
+    /* Table */
+    table { width:100%; margin: 12px 0 20px; border-collapse: collapse; background:#fff; }
+    thead th {
+      background:#fff; color:#000; font-weight: bold; font-size:14px;
+      padding:10px 12px; text-align:left; border-bottom:1px solid #ddd;
+    }
+    td {
+      padding:10px 12px; font-size:14px; border-bottom:1px solid #eee; vertical-align:middle;
+    }
+    tbody tr:hover { background:#fafafa; }
+    .hl { background:#fff7cc !important; } /* highlight last result */
+
+    .empty{ padding:20px; color:#555; }
+    .toast{
+      position:fixed; right:18px; bottom:18px; background:#0f1f3e; color:#fff;
+      padding:10px 14px; border-radius:8px; box-shadow:0 6px 24px rgba(0,0,0,.16);
+      display:none;
+    }
+  </style>
+</head>
+<body>
+  <div class="sidebar">
+    <div>
+      <h2>🩻 Radiography</h2>
+      <div class="s-mini">
+        Track your performance across practice exams and spot trends over time. 📈
+        <div class="s-kpis">
+          <div><b>Total Tests:</b> ${totalTests}</div>
+          <div><b>Avg Score:</b> ${avgScore}%</div>
+          <div><b>Best Score:</b> ${bestScore}%</div>
+          <div><b>Coverage:</b> ${coverage}%</div>
+        </div>
+      </div>
+    </div>
+    <form class="logout-form" action="/logout" method="POST">
+      <button type="submit">🚪 Logout</button>
+    </form>
+  </div>
+
+  <div class="main">
+    <div class="admin-bar">
+      <div>Tip: Review missed questions to raise your coverage. Focus on topics with the biggest gaps.</div>
+      <button onclick="location.href='/test-center'">Go to Test Center</button>
+    </div>
+
+    <div class="card">
+      <h3 style="margin:0 0 8px">My Performance</h3>
+      <p style="margin:0">
+        Your latest score, averages, and full history of completed practice tests.
+      </p>
+    </div>
+
+    <div class="navbar">
+      <button onclick="location.href='/dashboard'">🏠 Dashboard</button>
+      <button onclick="location.href='/results'">📁 Results</button>
+      <button onclick="location.href='/test-center'">📝 Practice</button>
+      <button onclick="location.href='/settings'">⚙️ Settings</button>
+    </div>
+
+    <h2>📊 Overview</h2>
+    <div class="hr-accent"></div>
+
+    <div class="cards">
+      <div class="kcard"><h3>Last Test Score</h3><b>${lastScore}%</b></div>
+      <div class="kcard"><h3>Average Score</h3><b>${avgScore}%</b></div>
+      <div class="kcard"><h3>Best Score</h3><b>${bestScore}%</b></div>
+      <div class="kcard"><h3>Coverage</h3><b>${coverage}%</b></div>
+      <div class="kcard"><h3>Avg Time / Test</h3><b>${avgTimeMin} min</b></div>
+    </div>
+
+    <h2>🧾 Recent Results</h2>
+    <div class="hr-accent"></div>
+
+    ${totalTests === 0 ? `
+      <div class="empty">
+        You don’t have any completed practice tests yet.
+        <a href="/test-center">Start your first test →</a>
+      </div>
+    ` : `
+      <table>
+        <thead>
+          <tr>
+            <th>#</th><th>Test</th><th>Score</th><th>Correct</th><th>Time Taken</th><th>Date</th>
           </tr>
-        `;
-      }).join('')
-    : '<tr><td colspan="5" style="text-align:center;color:#bbb;">No active test takers in the last 5 minutes.</td></tr>';
+        </thead>
+        <tbody>
+          ${rows}
+        </tbody>
+      </table>
+    `}
+  </div>
 
-  res.send(`<!DOCTYPE html><html><head><title>Live Test Progress</title>
-    <style>
-      body{margin:0;font-family:Arial;background:#f8f9fb;display:flex}
-      .sidebar{width:220px;background:#fff;padding:20px;height:100vh;border-right:1px solid #ddd}
-      .sidebar h2{font-size:18px;margin-bottom:20px;color:#0f1f3e}
-      .sidebar nav{display:flex;flex-direction:column;gap:8px}
-      .sidebar nav .section-title{margin-top:15px;margin-bottom:6px;font-size:13px;font-weight:bold;color:#666;text-transform:uppercase;border-bottom:1px solid #ddd;padding-bottom:4px}
-      .sidebar nav a{text-decoration:none;color:#0f1f3e;font-size:14px;padding-left:10px}
-      .sidebar nav a:hover{text-decoration:underline}
-      .main{flex:1;padding:40px;background:#fff}
-      h3{color:#0f1f3e}
-      table{width:100%;border-collapse:collapse;background:#fff;margin-top:20px}
-      th,td{padding:10px 12px;text-align:left;border-bottom:1px solid #e0e0e0;font-size:14px}
-      th{background:#f4f4f4}
-      .refresh-btn {
-        margin-top: 10px;
-        padding: 8px 16px;
-        background: #1a358d;
-        color: white;
-        border: none;
-        border-radius: 4px;
-        cursor: pointer;
+  <div id="toast" class="toast">Test saved! Your result has been added.</div>
+
+  <script>
+    (function(){
+      const lastId = ${JSON.stringify(lastTestId)};
+      if (!lastId) return;
+
+      // Highlight row + toast
+      const row = document.querySelector(\`tr[data-tid="\${lastId}"]\`);
+      if (row) {
+        row.classList.add('hl');
+        row.scrollIntoView({ behavior:'smooth', block:'center' });
       }
-      .refresh-btn:hover { background: #0f275f; }
-      @media (max-width:900px) {
-        .main{padding:10px;}
-        .sidebar{display:none;}
+      const toast = document.getElementById('toast');
+      if (toast) {
+        toast.style.display = 'block';
+        setTimeout(() => toast.style.display = 'none', 3200);
       }
-    </style>
-    </head><body>
-      <div class="sidebar">
-        <h2>🩻 Radiography</h2>
-        <nav>
-          <div class="section-title">Management</div>
-          <a href="/admin/dashboard">📊 Dashboard</a>
-          <a href="/admin/tests">📋 Manage Tests</a>
-          <a href="/admin/create-test">➕ Create Test</a>
-          <a href="/admin/questions">🧠 Manage Questions</a>
-          <a href="/upload-form">📤 Upload Excel</a>
-          <div class="section-title">Analytics</div>
-          <a href="/admin/test-analytics">📈 Test Analytics</a>
-          <a href="/admin/live-progress" style="font-weight:bold;color:#28a745;">🟢 Live Test Progress</a>
-          <a href="/admin/live-users">👥 Live Users</a>
-          <a href="/admin/user-analytics">📊 User Analytics</a>
-          <a href="/admin/question-analytics">❓ Question Analytics</a>
-        </nav>
-      </div>
-      <div class="main">
-        <h3>🟢 Live Test Progress (Last 5 Minutes)</h3>
-        <button onclick="location.reload()" class="refresh-btn">🔄 Refresh</button>
-        <table>
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Test</th>
-              <th>Progress</th>
-              <th>Question</th>
-              <th>Last Activity</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${rows}
-          </tbody>
-        </table>
-      </div>
-    </body></html>`);
+    })();
+  </script>
+</body>
+</html>
+  `);
 });
 
 
-function requireAdmin(req, res, next) {
-  // No admin check, allow everyone
-  return next();
-}
-
-
-// POST route to create a new user and notify admin
-app.post('/api/users', async (req, res) => {
-  const { name, email } = req.body;
-
-  if (!name || !email) {
-    return res.status(400).json({ error: 'Name and email are required.' });
-  }
-
-  try {
-    const user = await User.create({ name, email });
-
-    // Just log the notification to the console
-    notifyNewUser(user);
-
-    res.json(user);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Instead of sending a push notification, just log to console
-function notifyNewUser(user) {
-  console.log('🔔 New User Notification!');
-  console.log(`User "${user.name}" (${user.email}) just signed up at ${user.createdAt}`);
-}
-
-
-app.post('/api/login', async (req, res) => {
-  const { email, password } = req.body;
-
-  // Find user by email
-  const user = await User.findOne({ email });
-  if (!user) {
-    return res.status(401).json({ error: 'User not found' });
-  }
-  // TODO: Add password validation here!
-
-  // 🔔 Log notification to console
-  notifyLogin(user);
-
-  res.json({ message: 'Login successful', user });
-});
-
-// Notification function
-function notifyLogin(user) {
-  console.log('🔔 New login notification:');
-  console.log(`User "${user.name}" (${user.email}) logged in at ${new Date().toLocaleString()}`);
-}
-
-// Helper to send notification (edit YOUR_PUSH_SERVICE_ENDPOINT)
-async function notifyNewUser(user) {
-  await fetch('https://YOUR_PUSH_SERVICE_ENDPOINT', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      to: '/topics/admins',
-      title: 'New User Registered!',
-      body: `User ${user.name} just signed up!`
-    })
-  });
-}
 
 // ✅ Start Server
 app.listen(port, () => {
