@@ -20,7 +20,7 @@ const { Server } = require('socket.io');
 const io = new Server(server);
 
 // ✅ Port
-const port = 3070;
+const port = 3071;
 
 
 // ✅ Middleware Setup
@@ -2716,9 +2716,6 @@ app.post('/save-answer/:testId/:questionId', (req, res) => {
   res.json({ ok: true });
 });
 
-
-/*  test center aand landing page */
-
 app.get('/', (req, res) => {
   res.send(`
   <!doctype html>
@@ -2729,21 +2726,21 @@ app.get('/', (req, res) => {
     <title>Radiography Practice Exam Platform</title>
     <style>
       :root{
-  --brand:#0f1f3e;   /* nav + primary buttons match login bg */
-  --accent:#0f1f3e;  /* CTA band + accents match login bg */
-  --ink:#1f2937;
-  --ring:#e5e7eb;
-  --bg:#f7f7f7;
-  --card:#ffffff;
-}
-
+        --brand:#0f1f3e;   /* nav + primary to match login bg */
+        --accent:#0f1f3e;  /* accents also match login bg */
+        --btn:#0a472e;     /* ✅ same green as login buttons */
+        --ink:#1f2937;
+        --ring:#e5e7eb;
+        --bg:#f7f7f7;
+        --card:#ffffff;
+      }
 
       *{ box-sizing:border-box }
       body{ margin:0; font-family: Arial, sans-serif; background:var(--bg); color:var(--ink); }
       h2{ font-size:2rem; margin:0 0 12px; }
       p{ line-height:1.6; }
 
-      /* ===== Top maroon (now blue) band ===== */
+      /* ===== Top band ===== */
       .topband{ background:var(--brand); color:#fff; }
       .topband-in{ max-width:1200px; margin:0 auto; padding:0 30px; display:flex; align-items:center; gap:20px; }
       .tabs{ display:flex; align-items:center; gap:24px; height:44px; }
@@ -2773,13 +2770,19 @@ app.get('/', (req, res) => {
       .left-panel{ flex:2; padding:40px; background:#fff; border:1px solid var(--ring); border-radius:8px; }
       .left-panel h1{ color:var(--accent); font-size:2rem; margin-bottom:10px; }
       .left-panel p{ font-size:1rem; margin-bottom:20px; color:#222; }
-      .cta{ background:var(--brand); color:#fff; padding:12px 20px; text-decoration:none; border-radius:6px; font-weight:700; display:inline-block; }
+      .cta{ background:var(--btn); color:#fff; padding:12px 20px; text-decoration:none; border-radius:6px; font-weight:700; display:inline-block; }
 
       .right-panel{ flex:1; background:#fff; padding:24px; border:1px solid var(--ring); border-radius:8px; }
       .right-panel h3{ margin-top:0; }
-      .form-group{ margin-bottom:12px; }
-      .form-group input{ width:100%; padding:10px; border:1px solid #ccc; border-radius:4px; }
-      .btn{ width:100%; padding:12px; background:var(--brand); color:#fff; border:none; border-radius:6px; font-size:1rem; font-weight:700; }
+
+      /* ✅ Match login form styles */
+      .label{font-size:12px;color:#3e4c48;margin:8px 0 6px;display:flex;justify-content:space-between}
+      .input{width:100%;border:1px solid #cfdad3;border-radius:4px;padding:10px 12px;font-size:14px;outline:none}
+      .input:focus{border-color:#3aa57a;box-shadow:0 0 0 3px rgba(58,165,122,.15)}
+      .btn{ display:inline-flex; align-items:center; gap:8px; border:none; border-radius:4px; padding:10px 16px; font-weight:700; cursor:pointer; text-decoration:none; }
+      .btn.primary{ background:var(--btn); color:#e8fff4; }
+      .btn.primary:hover{ filter:brightness(.98); }
+      .btn.block{ width:100%; justify-content:center; }
 
       /* ===== Sections / cards ===== */
       .section{ max-width:1200px; margin:60px auto; padding:0 30px; }
@@ -2829,8 +2832,9 @@ app.get('/', (req, res) => {
       .post{ background:#fff; border:1px solid var(--ring); border-radius:10px; padding:16px; }
       .contact{ display:grid; grid-template-columns:1.1fr .9fr; gap:18px; }
       .contact form .row{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
-      .input, textarea{ width:100%; padding:10px; border:1px solid #cfd5e1; border-radius:8px; }
-      textarea{ min-height:110px; }
+      .input, textarea{ border:1px solid #cfdad3; border-radius:4px; }
+      .input:focus, textarea:focus{ border-color:#3aa57a; box-shadow:0 0 0 3px rgba(58,165,122,.15); outline:none; }
+      textarea{ min-height:110px; width:100%; padding:10px; }
       footer{ text-align:center; padding:18px; background:#f1f1f1; font-size:0.9rem; color:#555; border-top:1px solid #ddd; }
 
       @media (max-width: 900px){
@@ -2886,7 +2890,7 @@ app.get('/', (req, res) => {
       </div>
     </div>
 
-    <!-- HERO (light grey background) -->
+    <!-- HERO -->
     <div class="hero-wrap">
       <div class="hero-in">
         <div class="main">
@@ -2896,14 +2900,15 @@ app.get('/', (req, res) => {
             <a href="/test-center" class="cta">Start Your First Practice Exam</a>
           </div>
 
-          <!-- EMAIL-ONLY SIGN IN -->
+          <!-- ✅ EMAIL-ONLY SIGN IN -->
           <div class="right-panel">
             <h3>Sign in to Your Exam Account</h3>
             <form id="emailSignInForm" autocomplete="email">
-              <div class="form-group">
-                <input type="email" name="email" id="signinEmail" placeholder="Email Address" required>
+              <div class="label"><span>Email</span></div>
+              <input class="input" type="email" name="email" id="signinEmail" placeholder="you@example.com" required>
+              <div style="margin-top:12px">
+                <button type="submit" class="btn primary block">Sign In</button>
               </div>
-              <button type="submit" class="btn">Sign In</button>
             </form>
             <p style="margin-top:10px; font-size:0.9rem;">
               New to the platform? <a href="/register">Create your free exam account</a>
@@ -2914,7 +2919,7 @@ app.get('/', (req, res) => {
       </div>
     </div>
 
-    <!-- WHITE ZONE: everything else -->
+    <!-- WHITE ZONE: everything else (ALL ORIGINAL CONTENT KEPT) -->
     <div class="white-zone">
       <section class="section">
         <h2>Built by technologists, engineered for exam day</h2>
@@ -3087,7 +3092,7 @@ app.get('/', (req, res) => {
           <a href="/register" class="cta">Create Free Account</a>
         </div>
       </section>
-    </div><!-- /white-zone -->
+    </div>
 
     <footer>
       © 2025 Radiography Practice Exam Platform — Prepare · Practice · Succeed
@@ -3137,6 +3142,7 @@ app.get('/', (req, res) => {
   </html>
   `);
 });
+
 
 // ✅ Test Center Route
 app.get('/test-center', requireLogin, async (req, res) => {
