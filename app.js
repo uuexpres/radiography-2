@@ -20,7 +20,7 @@ const { Server } = require('socket.io');
 const io = new Server(server);
 
 // ✅ Port
-const port = 3068;
+const port = 3070;
 
 
 // ✅ Middleware Setup
@@ -281,111 +281,232 @@ function requireLogin(req, res, next) {
   next();
 }
  
+// /login – TD-style “EasyWeb” look
+app.get('/login', async (req, res) => {
+  console.log('\n===== [ROUTE HIT] GET /login =====');
+  console.log('💾 Session snapshot:', {
+    hasSession: !!req.session,
+    userId: req.session?.userId || null
+  });
 
-app.get('/login', (req, res) => {
-  const usStates = [
-    'Alabama','Alaska','Arizona','Arkansas','California','Colorado','Connecticut',
-    'Delaware','Florida','Georgia','Hawaii','Idaho','Illinois','Indiana','Iowa',
-    'Kansas','Kentucky','Louisiana','Maine','Maryland','Massachusetts','Michigan',
-    'Minnesota','Mississippi','Missouri','Montana','Nebraska','Nevada','New Hampshire',
-    'New Jersey','New Mexico','New York','North Carolina','North Dakota','Ohio',
-    'Oklahoma','Oregon','Pennsylvania','Rhode Island','South Carolina','South Dakota',
-    'Tennessee','Texas','Utah','Vermont','Virginia','Washington','West Virginia',
-    'Wisconsin','Wyoming'
-  ];
+  if (req.session?.userId) {
+    console.log('🔒 Already authenticated — redirecting to /test-center');
+    return res.redirect('/test-center');
+  }
 
-  const canadianProvinces = [
-    'Alberta','British Columbia','Manitoba','New Brunswick','Newfoundland and Labrador',
-    'Nova Scotia','Ontario','Prince Edward Island','Quebec','Saskatchewan','Northwest Territories',
-    'Nunavut','Yukon'
-  ];
+  const html = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Radiography Exam Center — Sign in</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <style>
+    :root{
+      --green:#0a472e; --green-2:#093b27; --green-3:#0f5a3a;
+      --ink:#0f1f3e; --muted:#6b7280; --ring:#e5e7eb;
+      --white:#fff; --accent:#107c41; --page-navy:#0f1f3e;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--page-navy);color:#0d1b1a}
 
-  const usOptions = usStates.map(s => `<option value="${s}">${s}</option>`).join('');
-  const caOptions = canadianProvinces.map(p => `<option value="${p}">${p}</option>`).join('');
+    /* Top Nav */
+    .nav{height:56px;background:var(--page-navy);color:#e7f5ed;display:flex;align-items:center;gap:16px;padding:0 18px;border-bottom:1px solid rgba(255,255,255,.08)}
+    .brand{display:flex;align-items:center;gap:10px;font-weight:800;letter-spacing:.2px}
+    .brand .badge{width:28px;height:28px;border-radius:6px;background:#0a472e;display:flex;align-items:center;justify-content:center;color:#e7f5ed;font-weight:900}
+    .brand .name{font-size:18px}
+    .nav .grow{flex:1}
+    .nav a{color:#e7f5ed;text-decoration:none;opacity:.9;font-size:14px}
+    .nav a:hover{opacity:1}
 
-  res.send(`
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <title>Login – Radiography Assistant</title>
-      <style>
-        body {
-          font-family: 'Segoe UI', sans-serif;
-          background: white;
-          padding: 60px;
-          text-align: center;
-          color: #0f1f3e;
-        }
-        form {
-          background: #fff;
-          max-width: 500px;
-          margin: auto;
-          padding: 30px;
-          border-radius: 12px;
-          box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-        }
-        h2 { margin-bottom: 20px; }
-        input, select {
-          width: 90%;
-          padding: 10px;
-          margin: 10px 0;
-          border: 1px solid #ccc;
-          border-radius: 6px;
-          font-size: 16px;
-        }
-        button {
-          background: #007bff;
-          color: white;
-          padding: 10px 20px;
-          border: none;
-          border-radius: 6px;
-          cursor: pointer;
-          font-weight: bold;
-        }
-        button:hover {
-          background: #0056b3;
-        }
-      </style>
-    </head>
-    <body>
-      <form method="POST" action="/login">
-        <h2>Student Login</h2>
-        <input type="text" name="name" placeholder="Full Name" required /><br>
-        <input type="email" name="email" placeholder="Email Address" required /><br>
+    .wrap{max-width:1160px;margin:28px auto;padding:0 20px}
+    .grid{display:grid;grid-template-columns: 1.1fr .9fr; gap:22px}
+    @media (max-width:980px){ .grid{grid-template-columns:1fr} }
 
-        <select name="country" id="countrySelect" onchange="updateRegionOptions()" required>
-          <option value="">🌍 Select Country</option>
-          <option value="Canada">🇨🇦 Canada</option>
-          <option value="United States">🇺🇸 United States</option>
-          <option value="Other">🌐 Other</option>
-        </select><br>
+    .panel{background:var(--white);border-radius:6px;box-shadow:0 1px 2px rgba(0,0,0,.18);border:1px solid #e6efe9}
+    .panel .pad{padding:22px}
 
-        <select name="state" id="regionSelect" required>
-          <option value="">🏛️ Select Province/State</option>
-        </select><br>
+    .h1{font-size:22px;font-weight:800;margin:0 0 12px;color:#0d1b1a}
+    .sub{color:#4b5b55;margin-top:-6px;margin-bottom:14px;font-size:13px}
 
-        <label>📅 Exam Date:</label><br>
-        <input type="date" name="examDate" required /><br>
+    .label{font-size:12px;color:#3e4c48;margin:8px 0 6px;display:flex;justify-content:space-between}
+    .input{width:100%;border:1px solid #cfdad3;border-radius:4px;padding:10px 12px;font-size:14px;outline:none;background:#fff}
+    .input:focus{border-color:#3aa57a;box-shadow:0 0 0 3px rgba(58,165,122,.15)}
+    .row{display:flex;gap:12px}
+    .row .field{flex:1}
+    .muted{color:#72817b;font-size:12px}
 
-        <button type="submit">Enter</button>
-      </form>
+    .btn{display:inline-flex;align-items:center;gap:8px;border:none;border-radius:4px;padding:10px 16px;font-weight:700;cursor:pointer;text-decoration:none}
+    .btn.primary{background:#0a472e;color:#e8fff4}
+    .btn.primary:hover{filter:brightness(.98)}
+    .btn.block{width:100%;justify-content:center}
 
-      <script>
-        const regions = {
-          "Canada": \`${caOptions}\`,
-          "United States": \`${usOptions}\`
-        };
+    .check{display:flex;gap:8px;align-items:flex-start;margin-top:10px}
+    .check input{margin-top:2px}
 
-        function updateRegionOptions() {
-          const country = document.getElementById("countrySelect").value;
-          const regionSelect = document.getElementById("regionSelect");
-          regionSelect.innerHTML = '<option value="">🏛️ Select Province/State</option>' + (regions[country] || '');
-        }
-      </script>
-    </body>
-    </html>
-  `);
+    .footer{margin-top:28px;background:var(--page-navy);color:#cfe6dc;padding:22px 0}
+    .footer .links{display:flex;gap:18px;flex-wrap:wrap;font-size:13px}
+    .fine{font-size:12px;color:#b9d5c9;margin-top:10px}
+  </style>
+</head>
+<body>
+  <div class="nav">
+    <div class="brand">
+      <div class="badge">RX</div>
+      <div class="name">Radiography Exam Center</div>
+    </div>
+    <div class="grow"></div>
+    <a href="/test-center">Test Center</a>
+    <a href="/performance">Performance</a>
+    <a href="/about">About</a>
+    <a href="/help">Help</a>
+    <a href="/login" aria-current="page" style="font-weight:700;opacity:1">Login</a>
+  </div>
+
+  <div class="wrap">
+    <div class="grid">
+      <!-- LEFT: Sign-in / Create account -->
+      <div class="panel">
+        <div class="pad">
+          <div class="h1">Sign in or create your account</div>
+          <div class="sub">Practice radiography tests, track performance, and get weekly progress insights.</div>
+
+          <form method="POST" action="/login" autocomplete="on" novalidate>
+            <div class="label"><span>Full name</span></div>
+            <input class="input" type="text" name="name" placeholder="Your full name" required>
+
+            <div class="label"><span>Email</span></div>
+            <input class="input" type="email" name="email" placeholder="you@example.com" required>
+
+            <!-- Profile details (always visible; dropdown removed) -->
+            <div class="row">
+              <div class="field">
+                <div class="label"><span>Country</span></div>
+                <select class="input" name="country" id="countrySelect" required>
+                  <option value="">Select…</option>
+                  <option>United States</option>
+                  <option>Canada</option>
+                  <option>United Kingdom</option>
+                  <option>Australia</option>
+                  <option>Other</option>
+                </select>
+              </div>
+              <div class="field">
+                <div class="label"><span>State / Province / Region</span></div>
+                <select class="input" name="state" id="stateSelect" required>
+                  <option value="">Select…</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="row">
+              <div class="field">
+                <div class="label"><span>Exam Date</span></div>
+                <input class="input" type="date" name="examDate">
+              </div>
+            </div>
+
+            <!-- Removed password field -->
+
+            <label class="check">
+              <input type="checkbox" required>
+              <span class="muted">I agree to the Terms and consent to processing my data for account creation and test analytics.</span>
+            </label>
+
+            <div style="margin-top:12px">
+              <button class="btn primary block" type="submit">🔒 Continue</button>
+            </div>
+
+            <div style="margin-top:8px" class="muted">
+              <a href="/help" style="color:#0a472e;text-decoration:none">Need help signing in?</a>
+            </div>
+
+            <!-- Device token stays for backend use -->
+            <input type="hidden" name="deviceToken" value="">
+          </form>
+
+          <div style="margin-top:12px" class="muted">
+            This will create your account if one doesn’t exist yet.
+          </div>
+        </div>
+      </div>
+
+      <!-- RIGHT: App info -->
+      <div class="panel">
+        <div class="pad">
+          <div class="h1">Why join?</div>
+          <ul style="margin:8px 0 14px; padding-left:18px; line-height:1.6">
+            <li>Weekly practice aligned with clinical imaging routines</li>
+            <li>Reinforce anatomy, positioning, and critique skills</li>
+            <li>Personal performance dashboard & trends</li>
+          </ul>
+
+          <hr style="border:none;border-top:1px solid #e6efe9;margin:16px 0">
+
+          <div class="h1" style="font-size:18px">Getting started</div>
+          <ol style="margin:8px 0 0; padding-left:18px; line-height:1.6">
+            <li>Enter your name and email, plus exam date (optional)</li>
+            <li>Choose a weekly test in the Test Center</li>
+            <li>See results instantly and track progress on Performance</li>
+          </ol>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer">
+      <div class="wrap" style="margin:0 auto">
+        <div class="links">
+          <a href="/privacy" style="color:#cfe6dc;text-decoration:none">Privacy</a>
+          <a href="/terms" style="color:#cfe6dc;text-decoration:none">Terms</a>
+          <a href="/contact" style="color:#cfe6dc;text-decoration:none">Contact</a>
+        </div>
+        <div class="fine">© ${new Date().getFullYear()} Radiography Exam Center. All rights reserved.</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Simple country -> state/province mapping (US/Canada). Others show "Not applicable".
+    const US_STATES = [
+      "Alabama","Alaska","Arizona","Arkansas","California","Colorado","Connecticut","Delaware",
+      "Florida","Georgia","Hawaii","Idaho","Illinois","Indiana","Iowa","Kansas","Kentucky",
+      "Louisiana","Maine","Maryland","Massachusetts","Michigan","Minnesota","Mississippi","Missouri",
+      "Montana","Nebraska","Nevada","New Hampshire","New Jersey","New Mexico","New York",
+      "North Carolina","North Dakota","Ohio","Oklahoma","Oregon","Pennsylvania","Rhode Island",
+      "South Carolina","South Dakota","Tennessee","Texas","Utah","Vermont","Virginia",
+      "Washington","West Virginia","Wisconsin","Wyoming","District of Columbia"
+    ];
+    const CA_PROVINCES = [
+      "Alberta","British Columbia","Manitoba","New Brunswick","Newfoundland and Labrador",
+      "Northwest Territories","Nova Scotia","Nunavut","Ontario","Prince Edward Island",
+      "Quebec","Saskatchewan","Yukon"
+    ];
+
+    const countrySel = document.getElementById('countrySelect');
+    const stateSel = document.getElementById('stateSelect');
+
+    function setOptions(arr){
+      stateSel.innerHTML = '<option value="">Select…</option>' + arr.map(x => '<option>'+x+'</option>').join('');
+    }
+    function setNA(){
+      stateSel.innerHTML = '<option value="N/A">N/A / Not applicable</option>';
+    }
+    function refreshStates(){
+      const c = (countrySel.value || '').toLowerCase();
+      if (c === 'united states') setOptions(US_STATES);
+      else if (c === 'canada') setOptions(CA_PROVINCES);
+      else setNA();
+    }
+    countrySel.addEventListener('change', refreshStates);
+    // Initialize on load
+    refreshStates();
+  </script>
+</body>
+</html>`;
+
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(html);
 });
+
 
 
 
@@ -2608,13 +2729,14 @@ app.get('/', (req, res) => {
     <title>Radiography Practice Exam Platform</title>
     <style>
       :root{
-        --brand:#1a358d;   /* nav high-end blue (or pick your brand color) */
-        --accent:#2e6ea0;  /* accent blue */
-        --ink:#1f2937;
-        --ring:#e5e7eb;
-        --bg:#f7f7f7;
-        --card:#ffffff;
-      }
+  --brand:#0f1f3e;   /* nav + primary buttons match login bg */
+  --accent:#0f1f3e;  /* CTA band + accents match login bg */
+  --ink:#1f2937;
+  --ring:#e5e7eb;
+  --bg:#f7f7f7;
+  --card:#ffffff;
+}
+
 
       *{ box-sizing:border-box }
       body{ margin:0; font-family: Arial, sans-serif; background:var(--bg); color:var(--ink); }
