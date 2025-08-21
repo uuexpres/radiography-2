@@ -2990,7 +2990,7 @@ app.get('/', (req, res) => {
       <div class="hero-in">
         <div class="main">
           <div class="left-panel">
-            <h1>Pass Your Radiography Certification</h1>
+            <h1>Free Trail : Pass Your Radiography Certification</h1>
             <p>Access a comprehensive library of practice exams for ARRT®/CAMRT Radiography. Simulate real test timing, review image-based explanations, and track weak areas with analytics.</p>
             <a href="/test-center" class="cta">Start Your First Practice Exam</a>
           </div>
