@@ -3742,6 +3742,1423 @@ app.get('/performance', requireLogin, async (req, res) => {
 
 
 
+app.post('/admin/reset-tests', async (req, res) => {
+  await Test.deleteMany({});
+  console.log('🧨 All tests deleted');
+  res.redirect('/admin/dashboard');
+});
+
+
+app.post('/admin/reset-users', async (req, res) => {
+  await User.deleteMany({});
+  console.log('👥 All users deleted');
+  res.redirect('/admin/dashboard');
+});
+
+
+app.post('/admin/reset-analytics', async (req, res) => {
+  await Result.deleteMany({});
+  console.log('📉 All analytics (results) cleared');
+  res.redirect('/admin/dashboard');
+});
+
+
+// GET /admin/user-analytics – all users, including those with no tests
+app.get('/admin/user-analytics', async (req, res) => {
+  const users = await User.find().sort({ createdAt: -1 });
+  const results = await Result.find();
+
+  const summaries = users.map(user => {
+    const userResults = results.filter(r => r.userId?.toString() === user._id.toString());
+    const testsTaken = userResults.length;
+    const avgScore = testsTaken > 0
+      ? (userResults.reduce((sum, r) => sum + r.score, 0) / testsTaken).toFixed(1)
+      : '—';
+    const lastAttempt = testsTaken > 0
+      ? new Date(Math.max(...userResults.map(r => new Date(r.createdAt))))
+      : null;
+
+    return { user, testsTaken, avgScore, lastAttempt };
+  });
+
+  const rows = summaries.map(s => `
+    <tr>
+      <td><a href="/admin/user-analytics/${s.user._id}">${s.user.name}</a></td>
+      <td>${s.testsTaken}</td>
+      <td>${s.avgScore}</td>
+      <td>${s.lastAttempt ? new Date(s.lastAttempt).toLocaleDateString() : '—'}</td>
+      <td>${s.user.state || '—'}, ${s.user.country || '—'}</td>
+      <td>${s.user.examDate ? new Date(s.user.examDate).toLocaleDateString() : '—'}</td>
+    </tr>
+  `).join("");
+
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>User Analytics</title>
+      <style>
+        body { margin: 0; font-family: Arial; background: #f8f9fb; display: flex; }
+        .sidebar {
+          width: 220px; background: #fff; padding: 20px; height: 100vh; border-right: 1px solid #ddd;
+        }
+        .sidebar h2 {
+          font-size: 18px; margin-bottom: 20px; color: #0f1f3e;
+        }
+        .sidebar nav {
+          display: flex; flex-direction: column; gap: 8px;
+        }
+        .sidebar nav .section-title {
+          margin-top: 15px; margin-bottom: 6px;
+          font-size: 13px; font-weight: bold; color: #666;
+          text-transform: uppercase; border-bottom: 1px solid #ddd; padding-bottom: 4px;
+        }
+        .sidebar nav a {
+          text-decoration: none; color: #0f1f3e; font-size: 14px; padding-left: 10px;
+        }
+        .sidebar nav a:hover {
+          text-decoration: underline;
+        }
+        .main {
+          flex: 1; padding: 40px; background: #fff;
+        }
+        h3 {
+          color: #0f1f3e;
+        }
+        table {
+          width: 100%; border-collapse: collapse; background: #fff; margin-top: 20px;
+        }
+        th, td {
+          padding: 10px 12px; text-align: left;
+          border-bottom: 1px solid #e0e0e0; font-size: 14px;
+        }
+        th {
+          background: #f4f4f4;
+        }
+        td a {
+          color: #007bff;
+          text-decoration: none;
+        }
+        td a:hover {
+          text-decoration: underline;
+        }
+      </style>
+    </head>
+    <body>
+      <div class="sidebar">
+        <h2>🩻 Radiography</h2>
+        <nav>
+          <div class="section-title">Management</div>
+          <a href="/admin/dashboard">📊 Dashboard</a>
+          <a href="/admin/tests">📋 Manage Tests</a>
+          <a href="/admin/create-test">➕ Create Test</a>
+          <a href="/admin/questions">🧠 Manage Questions</a>
+          <a href="/upload-form">📤 Upload Excel</a>
+          <div class="section-title">Analytics</div>
+          <a href="/admin/test-analytics">📈 Test Analytics</a>
+          <a href="/admin/user-analytics" style="font-weight: bold;">👥 User Analytics</a>
+          <a href="/admin/question-analytics">❓ Question Analytics</a>
+        </nav>
+      </div>
+      <div class="main">
+        <h3>👥 User Analytics Overview</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>User</th>
+              <th>Tests Taken</th>
+              <th>Avg Score</th>
+              <th>Last Attempt</th>
+              <th>Province / Country</th>
+              <th>Exam Date</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows}
+          </tbody>
+        </table>
+      </div>
+    </body>
+    </html>
+  `);
+});
+
+
+
+
+app.get('/admin/user-analytics/:id', async (req, res) => {
+  const userId = req.params.id;
+  const user = await User.findById(userId);
+  if (!user) return res.send('<h2>User not found</h2>');
+
+  const attempts = await Result.find({ userId })
+    .populate('testId')
+    .sort({ createdAt: -1 });
+
+  const rows = attempts.map(a => {
+    const totalSeconds = a.timeTaken || 0;
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    const timeFormatted = `${minutes}m ${seconds}s`;
+
+    return `
+      <tr>
+        <td>${a.testId?.title || '—'}</td>
+        <td>${a.score}</td>
+        <td>${a.correctAnswers}/${a.totalQuestions}</td>
+        <td>${new Date(a.createdAt).toLocaleString()}</td>
+        <td>${timeFormatted}</td>
+      </tr>
+    `;
+  }).join('');
+
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>${user.name} – Analytics</title>
+      <style>
+        body { margin: 0; font-family: Arial; background: #f8f9fb; display: flex; }
+        .sidebar {
+          width: 220px; background: #fff; padding: 20px; height: 100vh; border-right: 1px solid #ddd;
+        }
+        .sidebar h2 {
+          font-size: 18px; margin-bottom: 20px; color: #0f1f3e;
+        }
+        .sidebar nav {
+          display: flex; flex-direction: column; gap: 8px;
+        }
+        .sidebar nav .section-title {
+          margin-top: 15px; margin-bottom: 6px;
+          font-size: 13px; font-weight: bold; color: #666;
+          text-transform: uppercase; border-bottom: 1px solid #ddd; padding-bottom: 4px;
+        }
+        .sidebar nav a {
+          text-decoration: none; color: #0f1f3e; font-size: 14px; padding-left: 10px;
+        }
+        .sidebar nav a:hover {
+          text-decoration: underline;
+        }
+        .main {
+          flex: 1; padding: 40px; background: #fff;
+        }
+        h3 {
+          color: #0f1f3e;
+        }
+        table {
+          width: 100%; border-collapse: collapse; background: #fff; margin-top: 20px;
+        }
+        th, td {
+          padding: 10px 12px; text-align: left;
+          border-bottom: 1px solid #e0e0e0; font-size: 14px;
+        }
+        th {
+          background: #f4f4f4;
+        }
+      </style>
+    </head>
+    <body>
+      <div class="sidebar">
+        <h2>🩻 Radiography</h2>
+        <nav>
+          <div class="section-title">Analytics</div>
+          <a href="/admin/user-analytics">← Back to Users</a>
+        </nav>
+      </div>
+      <div class="main">
+        <h3>👤 ${user.name} – Detailed Analytics</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Test</th>
+              <th>Score</th>
+              <th>Correct</th>
+              <th>Date</th>
+              <th>Total Time</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows}
+          </tbody>
+        </table>
+      </div>
+    </body>
+    </html>
+  `);
+});
+
+
+
+// ----------------------- TEST ANALYTICS OVERVIEW ---------------------------
+// GET /admin/test-analytics – list of tests with summary metrics
+app.get('/admin/test-analytics', async (req, res) => {
+  const summaries = await Result.aggregate([
+    {
+      $group: {
+        _id: "$testId",
+        attempts: { $sum: 1 },
+        avgScore: { $avg: "$score" },
+        lastAttempt: { $max: "$createdAt" }
+      }
+    },
+    { $lookup: { from: "tests", localField: "_id", foreignField: "_id", as: "test" } },
+    { $unwind: "$test" },
+    { $sort: { lastAttempt: -1 } }
+  ]);
+
+  const rows = summaries.map(s => `
+    <tr>
+      <td><a href="/admin/test-analytics/${s.test._id}">${s.test.title}</a></td>
+      <td>${s.attempts}</td>
+      <td>${s.avgScore.toFixed(1)}</td>
+      <td>${new Date(s.lastAttempt).toLocaleDateString()}</td>
+    </tr>
+  `).join("");
+
+  res.send(`<!DOCTYPE html><html><head><title>Test Analytics</title>
+    <style>
+      body{margin:0;font-family:Arial;background:#f8f9fb;display:flex}
+      .sidebar{width:220px;background:#fff;padding:20px;height:100vh;border-right:1px solid #ddd}
+      .sidebar h2{font-size:18px;margin-bottom:20px;color:#0f1f3e}
+      .sidebar nav{display:flex;flex-direction:column;gap:8px}
+      .sidebar nav .section-title{margin-top:15px;margin-bottom:6px;font-size:13px;font-weight:bold;color:#666;text-transform:uppercase;border-bottom:1px solid #ddd;padding-bottom:4px}
+      .sidebar nav a{text-decoration:none;color:#0f1f3e;font-size:14px;padding-left:10px}
+      .sidebar nav a:hover{text-decoration:underline}
+      .main{flex:1;padding:40px;background:#fff}
+      h3{color:#0f1f3e}
+      table{width:100%;border-collapse:collapse;background:#fff;margin-top:20px}
+      th,td{padding:10px 12px;text-align:left;border-bottom:1px solid #e0e0e0;font-size:14px}
+      th{background:#f4f4f4}
+    </style></head><body>
+      <div class="sidebar">
+        <h2>🩻 Radiography</h2>
+        <nav>
+          <div class="section-title">Management</div>
+          <a href="/admin/dashboard">📊 Dashboard</a>
+          <a href="/admin/tests">📋 Manage Tests</a>
+          <a href="/admin/create-test">➕ Create Test</a>
+          <a href="/admin/questions">🧠 Manage Questions</a>
+          <a href="/upload-form">📤 Upload Excel</a>
+          <div class="section-title">Analytics</div>
+          <a href="/admin/test-analytics" style="font-weight:bold;">📈 Test Analytics</a>
+          <a href="/admin/user-analytics">👥 User Analytics</a>
+          <a href="/admin/question-analytics">❓ Question Analytics</a>
+        </nav>
+      </div>
+      <div class="main">
+        <h3>📈 Test Analytics Overview</h3>
+        <table>
+          <thead><tr><th>Test</th><th>Attempts</th><th>Avg Score</th><th>Last Attempt</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </body></html>`);
+});
+
+
+// ✅ Route: /admin/test-analytics/:id – detailed view of a test
+app.get('/admin/test-analytics/:id', async (req, res) => {
+  const testId = req.params.id;
+  const test = await Test.findById(testId);
+  if (!test) return res.send('<h2>Test not found</h2>');
+
+  const attempts = await Result.find({ testId }).populate('userId').sort({ createdAt: -1 });
+  const rows = attempts.map(a => `
+    <tr>
+      <td>${a.userId?.name || '—'}</td>
+      <td>${a.score}</td>
+      <td>${a.correctAnswers}/${a.totalQuestions}</td>
+      <td>${new Date(a.createdAt).toLocaleString()}</td>
+    </tr>
+  `).join('');
+
+  res.send(`<!DOCTYPE html><html><head><title>${test.title} – Analytics</title>
+    <style>
+      body { margin: 0; font-family: Arial; background: #f8f9fb; display: flex; }
+      .sidebar { width: 220px; background: #fff; padding: 20px; height: 100vh; border-right: 1px solid #ddd; }
+      .sidebar h2 { font-size: 18px; margin-bottom: 20px; color: #0f1f3e; }
+      .sidebar nav { display: flex; flex-direction: column; gap: 8px; }
+      .sidebar nav .section-title { margin-top: 15px; margin-bottom: 6px; font-size: 13px; font-weight: bold; color: #666; text-transform: uppercase; border-bottom: 1px solid #ddd; padding-bottom: 4px; }
+      .sidebar nav a { text-decoration: none; color: #0f1f3e; font-size: 14px; padding-left: 10px; }
+      .sidebar nav a:hover { text-decoration: underline; }
+      .main { flex: 1; padding: 40px; background: #fff; }
+      h3 { color: #0f1f3e; }
+      table { width: 100%; border-collapse: collapse; background: #fff; margin-top: 20px; }
+      th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #e0e0e0; font-size: 14px; }
+      th { background: #f4f4f4; }
+    </style></head><body>
+    <div class="sidebar">
+      <h2>🩻 Radiography</h2>
+      <nav>
+        <div class="section-title">Analytics</div>
+        <a href="/admin/test-analytics">← Back to Tests</a>
+      </nav>
+    </div>
+    <div class="main">
+      <h3>📋 ${test.title} – Test Analytics</h3>
+      <table>
+        <thead><tr><th>User</th><th>Score</th><th>Correct</th><th>Date</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  </body></html>`);
+});
+
+
+
+// ✅ Route: /admin/test-analytics/:id/users – shows each user and their latest attempt for a given test
+app.get('/admin/test-analytics/:id/users', async (req, res) => {
+  const testId = req.params.id;
+  const test = await Test.findById(testId);
+  if (!test) return res.send('<h2>Test not found</h2>');
+
+  // Get all results for this test and map by userId (latest only)
+  const allResults = await Result.find({ testId }).populate('userId').sort({ createdAt: -1 });
+  const uniqueResults = [];
+  const seen = new Set();
+
+  for (const r of allResults) {
+    if (!seen.has(r.userId._id.toString())) {
+      seen.add(r.userId._id.toString());
+      uniqueResults.push(r);
+    }
+  }
+
+  const rows = uniqueResults.map(r => `
+    <tr>
+      <td>${r.userId?.name || '—'}</td>
+      <td>${r.score}</td>
+      <td>${r.correctAnswers}/${r.totalQuestions}</td>
+      <td>${new Date(r.createdAt).toLocaleString()}</td>
+      <td><a href="/admin/user-analytics/${r.userId._id}" style="font-size: 13px;">🔍 View User</a></td>
+    </tr>
+  `).join('');
+
+  res.send(`<!DOCTYPE html><html><head><title>${test.title} – Users Who Attempted</title>
+    <style>
+      body { margin: 0; font-family: Arial, sans-serif; background: #f8f9fb; display: flex; }
+      .sidebar {
+        width: 220px;
+        background: #fff;
+        padding: 20px;
+        height: 100vh;
+        border-right: 1px solid #ddd;
+      }
+      .sidebar h2 {
+        font-size: 18px;
+        margin-bottom: 20px;
+        color: #0f1f3e;
+      }
+      .sidebar nav {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .sidebar nav .section-title {
+        margin-top: 15px;
+        margin-bottom: 6px;
+        font-size: 13px;
+        font-weight: bold;
+        color: #666;
+        text-transform: uppercase;
+        border-bottom: 1px solid #ddd;
+        padding-bottom: 4px;
+      }
+      .sidebar nav a {
+        text-decoration: none;
+        color: #0f1f3e;
+        font-size: 14px;
+        padding-left: 10px;
+      }
+      .sidebar nav a:hover {
+        text-decoration: underline;
+      }
+      .main {
+        flex: 1;
+        padding: 40px;
+        background: #fff;
+      }
+      h3 {
+        margin-bottom: 10px;
+        color: #0f1f3e;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        background: #fff;
+        margin-top: 20px;
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
+        overflow: hidden;
+      }
+      th, td {
+        padding: 12px 14px;
+        text-align: left;
+        border-bottom: 1px solid #eee;
+        font-size: 14px;
+      }
+      th {
+        background: #f4f4f4;
+        color: #333;
+        font-weight: bold;
+      }
+      tr:hover {
+        background-color: #f9f9f9;
+      }
+    </style></head><body>
+    <div class="sidebar">
+      <h2>🩻 Radiography</h2>
+      <nav>
+        <div class="section-title">Analytics</div>
+        <a href="/admin/dashboard">🏠 Admin Dashboard</a>
+        <a href="/admin/test-analytics">📊 All Test Analytics</a>
+        <a href="/admin/test-analytics/${testId}">⬅ Back to Test</a>
+      </nav>
+    </div>
+    <div class="main">
+      <h3>👥 ${test.title} – User Attempts Overview</h3>
+      <p style="font-size: 14px; color: #555;">Showing the most recent attempt from each user.</p>
+      <table>
+        <thead><tr><th>User</th><th>Score</th><th>Correct</th><th>Latest Attempt</th><th></th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  </body></html>`);
+});
+
+
+
+app.get('/admin/masterclass', async (req, res) => {
+  const results = await Result.find().populate('userId');
+  const users = await User.find().sort({ name: 1 });
+  const tests = await Test.find().sort({ createdAt: -1 });
+
+  const userStats = {};
+  results.forEach(r => {
+    const userId = r.userId?._id.toString();
+    if (!userStats[userId]) userStats[userId] = { name: r.userId?.name || 'Unknown', lastScore: r.score };
+  });
+
+  const chartLabels = Object.values(userStats).map(u => `'${u.name}'`).join(', ');
+  const chartData = Object.values(userStats).map(u => u.lastScore).join(', ');
+
+  const userCards = users.map(u => {
+    const resultMatches = results.filter(r => r.userId?._id.toString() === u._id.toString());
+    const totalTests = resultMatches.length;
+    const latestScore = resultMatches[0]?.score || '—';
+
+    return `
+      <div style="display:flex; align-items:center; justify-content:space-between; background:#fff; padding:16px; border-radius:8px; box-shadow:0 1px 3px rgba(0,0,0,0.08); margin:10px 0">
+        <div style="display:flex; align-items:center; gap:12px;">
+          <div style="width:40px; height:40px; background:#cce; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:bold; font-size:14px;">
+            ${u.name?.charAt(0) || '?'}
+          </div>
+          <div>
+            <div style="font-weight:bold; font-size:15px;">${u.name}</div>
+            <div style="color:#888; font-size:13px;">${u.email}</div>
+          </div>
+        </div>
+        <div style="font-size:13px; color:#333;">${new Date(u.createdAt).toLocaleDateString()}</div>
+        <div style="font-size:13px; color:#333;">${totalTests}</div>
+        <div style="font-size:13px; color:#333;">${latestScore}</div>
+      </div>
+    `;
+  }).join('');
+
+  const liveNow = users.filter(u => {
+    const last = new Date(u.lastActive);
+    return (Date.now() - last.getTime()) <= 3 * 60 * 1000;
+  }).slice(0, 5);
+
+  const liveUsersHtml = liveNow.map(u => `
+    <div style="margin-bottom:10px; padding:10px; background:#e7ffe7; border-radius:6px; font-size:13px;">
+      <strong>${u.name}</strong><br>
+      ${u.email}<br>
+      Last Seen: ${new Date(u.lastActive).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+    </div>
+  `).join('');
+
+  const notLive = users.filter(u => {
+    const last = new Date(u.lastActive);
+    return (Date.now() - last.getTime()) > 3 * 60 * 1000;
+  }).slice(0, 3);
+
+  const notLiveHtml = notLive.map(u => `
+    <div style="margin-bottom:10px; padding:10px; background:#f0f0f0; border-radius:6px; font-size:13px;">
+      <strong>${u.name}</strong><br>
+      ${u.email}<br>
+      Last Seen: ${new Date(u.lastActive).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+    </div>
+  `).join('');
+
+  const latestTest = results.sort((a, b) => b.createdAt - a.createdAt)[0];
+  const latestTestTitle = tests.find(t => t._id.toString() === latestTest?.testId.toString())?.title || '—';
+  const latestTestCount = results.filter(r => r.testId.toString() === latestTest?.testId.toString()).length;
+
+  const lastTestHtml = `
+    <div style="margin-top:30px; padding:10px; background:#fef6e4; border-radius:6px; font-size:13px;">
+      <strong>🧪 Last Test Accessed</strong><br>
+      Title: ${latestTestTitle}<br>
+      Total Students: ${latestTestCount}
+    </div>
+  `;
+
+  // SECTION 6: Daily Question Submission Graph
+  const dailyQuestionCounts = await Question.aggregate([
+    {
+      $group: {
+        _id: {
+          year: { $year: '$createdAt' },
+          month: { $month: '$createdAt' },
+          day: { $dayOfMonth: '$createdAt' }
+        },
+        count: { $sum: 1 }
+      }
+    },
+    { $sort: { '_id.year': 1, '_id.month': 1, '_id.day': 1 } }
+  ]);
+
+  const qLabels = dailyQuestionCounts.map(d => `'${d._id.month}/${d._id.day}'`).join(', ');
+  const qData = dailyQuestionCounts.map(d => d.count).join(', ');
+
+  const miniGraphHtml = `
+    <div style="margin-top:30px; padding:10px; background:#eef2fb; border-radius:6px;">
+      <strong>📈 Questions Created per Day</strong>
+      <canvas id="questionGraph" height="150"></canvas>
+    </div>
+  `;
+
+  res.send(`<!DOCTYPE html><html><head><title>Masterclass Analytics</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels"></script>
+    <style>
+      body { margin: 0; font-family: Arial; background: #f8f9fb; display: flex; }
+      .sidebar {
+        width: 220px;
+        background: #fff;
+        padding: 20px;
+        border-right: 1px solid #ddd;
+        height: 100vh;
+      }
+      .rightbar {
+        width: 220px;
+        background: #fff;
+        padding: 20px;
+        border-left: 1px solid #ddd;
+        height: 100vh;
+        overflow-y: auto;
+      }
+      .sidebar h2 {
+        font-size: 18px;
+        margin-bottom: 20px;
+        color: #0f1f3e;
+      }
+      .sidebar nav {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .sidebar nav .section-title {
+        margin-top: 15px;
+        margin-bottom: 6px;
+        font-size: 13px;
+        font-weight: bold;
+        color: #666;
+        text-transform: uppercase;
+        border-bottom: 1px solid #ddd;
+        padding-bottom: 4px;
+      }
+      .sidebar nav a {
+        text-decoration: none;
+        color: #0f1f3e;
+        font-size: 14px;
+        padding-left: 10px;
+      }
+      .sidebar nav a:hover {
+        text-decoration: underline;
+      }
+      .main-content {
+        flex: 1;
+        padding: 40px;
+        background: #fff;
+        overflow-y: auto;
+      }
+      h3 { color: #0f1f3e; }
+      .chart-container {
+        margin: 40px 0;
+        padding: 20px;
+        background: white;
+        border-radius: 10px;
+        box-shadow: 0 0 6px rgba(0,0,0,0.1);
+        height: 500px;
+      }
+      .user-list {
+        margin-top: 40px;
+      }
+    </style></head><body>
+    <div class="sidebar">
+      <h2>🩻 Radiography</h2>
+      <nav>
+        <div class="section-title">Analytics</div>
+        <a href="/admin/dashboard">📊 Dashboard</a>
+        <a href="/admin/test-analytics">📈 Test Analytics</a>
+        <a href="/admin/user-analytics">👥 User Analytics</a>
+        <a href="/admin/question-analytics">❓ Question Analytics</a>
+        <a href="/admin/masterclass" style="font-weight:bold;">🎓 Masterclass</a>
+      </nav>
+    </div>
+    <div class="main-content">
+      <section>
+        <h3>🎓 Masterclass – User Last Scores Overview</h3>
+        <div class="chart-container">
+          <canvas id="userChart"></canvas>
+        </div>
+      </section>
+      <section>
+        <h3>👥 Users Overview</h3>
+        <div class="user-list">
+          ${userCards}
+        </div>
+      </section>
+    </div>
+    <div class="rightbar">
+      <h3 style="font-size:16px; color:#1a358d; margin-bottom:10px;">🟢 Top 5 Live Users</h3>
+      ${liveUsersHtml || '<p style="font-size:13px; color:#888;">No active users right now.</p>'}
+
+      <h3 style="font-size:16px; color:#1a358d; margin-top:30px;">🔘 Recently Seen (Not Live)</h3>
+      ${notLiveHtml || '<p style="font-size:13px; color:#888;">No inactive users available.</p>'}
+
+      ${lastTestHtml}
+      ${miniGraphHtml}
+    </div>
+
+    <script>
+      const ctx = document.getElementById('userChart').getContext('2d');
+      new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: [${chartLabels}],
+          datasets: [{
+            label: 'Last Test Score',
+            data: [${chartData}],
+            backgroundColor: '#9ACD32'
+          }]
+        },
+        options: {
+          indexAxis: 'y',
+          responsive: true,
+          plugins: {
+            datalabels: {
+              anchor: 'end',
+              align: 'right',
+              color: '#000',
+              font: { weight: 'bold' },
+              formatter: (val, ctx) => ctx.chart.data.labels[ctx.dataIndex]
+            },
+            legend: { display: false },
+            tooltip: { enabled: true }
+          },
+          scales: {
+            x: { beginAtZero: true, ticks: { color: '#333' } },
+            y: { ticks: { color: '#333' } }
+          }
+        },
+        plugins: [ChartDataLabels]
+      });
+
+      new Chart(document.getElementById('questionGraph').getContext('2d'), {
+        type: 'line',
+        data: {
+          labels: [${qLabels}],
+          datasets: [{
+            label: 'Questions',
+            data: [${qData}],
+            borderColor: '#1a358d',
+            backgroundColor: 'rgba(26, 53, 141, 0.1)',
+            fill: true
+          }]
+        },
+        options: {
+          responsive: true,
+          scales: {
+            x: { ticks: { color: '#555' } },
+            y: { beginAtZero: true, ticks: { color: '#555' } }
+          }
+        }
+      });
+    </script>
+  </body></html>`);
+});
+
+
+
+app.get('/admin/live-users', async (req, res) => {
+  console.log('📡 /admin/live-users route hit');
+
+  const threeMinutesAgo = new Date(Date.now() - 3 * 60 * 1000);
+  const users = await User.find().sort({ lastSeen: -1 });
+
+  const rows = users.map(user => {
+    const isLive = user.lastActive && user.lastActive >= threeMinutesAgo;
+    const lastSeenFormatted = user.lastSeen
+      ? new Date(user.lastSeen).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      : 'N/A';
+
+    return `
+      <tr style="background-color: ${isLive ? '#e6f4ea' : '#fff'}">
+        <td>${user.name}</td>
+        <td>${user.email}</td>
+        <td>
+          ${isLive
+            ? `🟢 Live <span style="color:#666;font-size:12px;">(${lastSeenFormatted})</span>`
+            : `🔴 Last Seen: <span style="color:#666;">${lastSeenFormatted}</span>`
+          }
+        </td>
+      </tr>
+    `;
+  }).join('');
+
+  res.send(`<!DOCTYPE html><html><head><title>Live Users</title>
+    <style>
+      body{margin:0;font-family:Arial;background:#f8f9fb;display:flex}
+      .sidebar{width:220px;background:#fff;padding:20px;height:100vh;border-right:1px solid #ddd}
+      .sidebar h2{font-size:18px;margin-bottom:20px;color:#0f1f3e}
+      .sidebar nav{display:flex;flex-direction:column;gap:8px}
+      .sidebar nav .section-title{margin-top:15px;margin-bottom:6px;font-size:13px;font-weight:bold;color:#666;text-transform:uppercase;border-bottom:1px solid #ddd;padding-bottom:4px}
+      .sidebar nav a{text-decoration:none;color:#0f1f3e;font-size:14px;padding-left:10px}
+      .sidebar nav a:hover{text-decoration:underline}
+      .main{flex:1;padding:40px;background:#fff}
+      h3{color:#0f1f3e}
+      table{width:100%;border-collapse:collapse;background:#fff;margin-top:20px}
+      th,td{padding:10px 12px;text-align:left;border-bottom:1px solid #e0e0e0;font-size:14px}
+      th{background:#f4f4f4}
+      .refresh-btn {
+        margin-top: 10px;
+        padding: 8px 16px;
+        background: #1a358d;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      .refresh-btn:hover { background: #0f275f; }
+    </style></head><body>
+      <div class="sidebar">
+        <h2>🩻 Radiography</h2>
+        <nav>
+          <div class="section-title">Management</div>
+          <a href="/admin/dashboard">📊 Dashboard</a>
+          <a href="/admin/tests">📋 Manage Tests</a>
+          <a href="/admin/create-test">➕ Create Test</a>
+          <a href="/admin/questions">🧠 Manage Questions</a>
+          <a href="/upload-form">📤 Upload Excel</a>
+          <div class="section-title">Analytics</div>
+          <a href="/admin/test-analytics">📈 Test Analytics</a>
+          <a href="/admin/user-analytics" style="font-weight:bold;">👥 User Analytics</a>
+          <a href="/admin/question-analytics">❓ Question Analytics</a>
+        </nav>
+      </div>
+      <div class="main">
+        <h3>👥 Live Users (Last 3 Minutes)</h3>
+        <button onclick="location.reload()" class="refresh-btn">🔄 Refresh</button>
+        <table>
+          <thead><tr><th>Name</th><th>Email</th><th>Status</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </body></html>`);
+});
+
+
+app.get('/admin/live-progress', async (req, res) => {
+  const FIVE_MIN = 5 * 60 * 1000;
+  const now = new Date();
+  const progressList = await TestProgress.find({
+    status: 'active',
+    updatedAt: { $gte: new Date(now - FIVE_MIN) }
+  }).populate('userId testId');
+
+  const rows = progressList.length
+    ? progressList.map(p => {
+        const percent = p.total > 0 ? Math.round(100 * p.index / p.total) : 0;
+        const lastSeenFormatted = p.updatedAt
+          ? new Date(p.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          : 'N/A';
+        return `
+          <tr style="background-color: ${percent === 100 ? '#e6f4ea' : '#fff'}">
+            <td>${p.userId?.name || 'Unknown'}</td>
+            <td>${p.testId?.title || ''}</td>
+            <td>
+              <div style="width:110px;height:16px;background:#eee;border-radius:6px;overflow:hidden;display:inline-block;vertical-align:middle;">
+                <div style="width:${percent}%;height:100%;background:#28a745;"></div>
+              </div>
+              <span style="font-size:13px;vertical-align:middle;margin-left:3px;">${percent}%</span>
+            </td>
+            <td>Q${p.index + 1} / ${p.total}</td>
+            <td>
+              <span style="color:#666;font-size:13px;">${lastSeenFormatted}</span>
+            </td>
+          </tr>
+        `;
+      }).join('')
+    : '<tr><td colspan="5" style="text-align:center;color:#bbb;">No active test takers in the last 5 minutes.</td></tr>';
+
+  res.send(`<!DOCTYPE html><html><head><title>Live Test Progress</title>
+    <style>
+      body{margin:0;font-family:Arial;background:#f8f9fb;display:flex}
+      .sidebar{width:220px;background:#fff;padding:20px;height:100vh;border-right:1px solid #ddd}
+      .sidebar h2{font-size:18px;margin-bottom:20px;color:#0f1f3e}
+      .sidebar nav{display:flex;flex-direction:column;gap:8px}
+      .sidebar nav .section-title{margin-top:15px;margin-bottom:6px;font-size:13px;font-weight:bold;color:#666;text-transform:uppercase;border-bottom:1px solid #ddd;padding-bottom:4px}
+      .sidebar nav a{text-decoration:none;color:#0f1f3e;font-size:14px;padding-left:10px}
+      .sidebar nav a:hover{text-decoration:underline}
+      .main{flex:1;padding:40px;background:#fff}
+      h3{color:#0f1f3e}
+      table{width:100%;border-collapse:collapse;background:#fff;margin-top:20px}
+      th,td{padding:10px 12px;text-align:left;border-bottom:1px solid #e0e0e0;font-size:14px}
+      th{background:#f4f4f4}
+      .refresh-btn {
+        margin-top: 10px;
+        padding: 8px 16px;
+        background: #1a358d;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      .refresh-btn:hover { background: #0f275f; }
+      @media (max-width:900px) {
+        .main{padding:10px;}
+        .sidebar{display:none;}
+      }
+    </style>
+    </head><body>
+      <div class="sidebar">
+        <h2>🩻 Radiography</h2>
+        <nav>
+          <div class="section-title">Management</div>
+          <a href="/admin/dashboard">📊 Dashboard</a>
+          <a href="/admin/tests">📋 Manage Tests</a>
+          <a href="/admin/create-test">➕ Create Test</a>
+          <a href="/admin/questions">🧠 Manage Questions</a>
+          <a href="/upload-form">📤 Upload Excel</a>
+          <div class="section-title">Analytics</div>
+          <a href="/admin/test-analytics">📈 Test Analytics</a>
+          <a href="/admin/live-progress" style="font-weight:bold;color:#28a745;">🟢 Live Test Progress</a>
+          <a href="/admin/live-users">👥 Live Users</a>
+          <a href="/admin/user-analytics">📊 User Analytics</a>
+          <a href="/admin/question-analytics">❓ Question Analytics</a>
+        </nav>
+      </div>
+      <div class="main">
+        <h3>🟢 Live Test Progress (Last 5 Minutes)</h3>
+        <button onclick="location.reload()" class="refresh-btn">🔄 Refresh</button>
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Test</th>
+              <th>Progress</th>
+              <th>Question</th>
+              <th>Last Activity</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows}
+          </tbody>
+        </table>
+      </div>
+    </body></html>`);
+});
+
+
+function requireAdmin(req, res, next) {
+  // No admin check, allow everyone
+  return next();
+}
+
+
+// POST route to create a new user and notify admin
+app.post('/api/users', async (req, res) => {
+  const { name, email } = req.body;
+
+  if (!name || !email) {
+    return res.status(400).json({ error: 'Name and email are required.' });
+  }
+
+  try {
+    const user = await User.create({ name, email });
+
+    // Just log the notification to the console
+    notifyNewUser(user);
+
+    res.json(user);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Instead of sending a push notification, just log to console
+function notifyNewUser(user) {
+  console.log('🔔 New User Notification!');
+  console.log(`User "${user.name}" (${user.email}) just signed up at ${user.createdAt}`);
+}
+
+
+app.post('/api/login', async (req, res) => {
+  const { email, password } = req.body;
+
+  // Find user by email
+  const user = await User.findOne({ email });
+  if (!user) {
+    return res.status(401).json({ error: 'User not found' });
+  }
+  // TODO: Add password validation here!
+
+  // 🔔 Log notification to console
+  notifyLogin(user);
+
+  res.json({ message: 'Login successful', user });
+});
+
+// Notification function
+function notifyLogin(user) {
+  console.log('🔔 New login notification:');
+  console.log(`User "${user.name}" (${user.email}) logged in at ${new Date().toLocaleString()}`);
+}
+
+// Helper to send notification (edit YOUR_PUSH_SERVICE_ENDPOINT)
+async function notifyNewUser(user) {
+  await fetch('https://YOUR_PUSH_SERVICE_ENDPOINT', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      to: '/topics/admins',
+      title: 'New User Registered!',
+      body: `User ${user.name} just signed up!`
+    })
+  });
+}
+
+app.get('/', (req, res) => {
+  res.send(`
+  <!doctype html>
+  <html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Radiography Practice Exam Platform</title>
+    <style>
+      :root{
+        --brand:#1a358d;   /* nav high-end blue (or pick your brand color) */
+        --accent:#2e6ea0;  /* accent blue */
+        --ink:#1f2937;
+        --ring:#e5e7eb;
+        --bg:#f7f7f7;
+        --card:#ffffff;
+      }
+
+      *{ box-sizing:border-box }
+      body{ margin:0; font-family: Arial, sans-serif; background:var(--bg); color:var(--ink); }
+      h2{ font-size:2rem; margin:0 0 12px; }
+      p{ line-height:1.6; }
+
+      /* ===== Top maroon (now blue) band ===== */
+      .topband{ background:var(--brand); color:#fff; }
+      .topband-in{ max-width:1200px; margin:0 auto; padding:0 30px; display:flex; align-items:center; gap:20px; }
+      .tabs{ display:flex; align-items:center; gap:24px; height:44px; }
+      .tabs a{ display:flex; align-items:center; justify-content:center; height:100%; padding:0 14px; text-decoration:none; font-weight:700; font-size:14px; color:#fff; border-radius:6px 6px 0 0; }
+      .tabs a.active{ background:#fff; color:var(--ink); border-bottom:1px solid #fff; position:relative; z-index:2; }
+      .top-right{ margin-left:auto; display:flex; align-items:center; gap:16px; font-size:14px; opacity:.95; }
+      .flag{ width:18px; height:12px; background:#d00; border:2px solid #fff; border-radius:2px; display:inline-block }
+      .bridge{ height:1px; background:#fff; }
+
+      /* ===== Subheader + category row ===== */
+      .subhead{ background:#fff; border-bottom:1px solid var(--ring); }
+      .subhead-in{ max-width:1200px; margin:0 auto; padding:16px 30px; display:flex; align-items:center; gap:20px; }
+      .logo-word{ font-size:28px; font-weight:900; color:var(--accent); letter-spacing:.4px; }
+      .search-wrap{ margin-left:auto; display:flex; align-items:center; gap:12px; }
+      .search{ display:flex; align-items:center; gap:10px; padding:10px 14px; border:1px solid #e2e6ef; border-radius:24px; width:360px; background:#fff; }
+      .search input{ border:0; outline:none; width:100%; background:transparent; font-size:15px; color:#374151; font-style:italic; }
+      .icon{ width:34px; height:34px; border:1px solid #e2e6ef; border-radius:50%; display:grid; place-items:center; color:var(--accent); font-weight:900; }
+
+      .catnav{ background:#fff; border-bottom:1px solid var(--ring); }
+      .catnav-in{ max-width:1200px; margin:0 auto; padding:10px 30px; display:flex; gap:20px; flex-wrap:wrap; font-weight:600; }
+      .catnav-in a{ color:#374151; text-decoration:none; }
+
+      /* ===== HERO ===== */
+      .hero-wrap{ background:var(--bg); }
+      .hero-in{ max-width:1200px; margin:0 auto; padding:40px 30px; }
+      .main{ display:flex; gap:24px; }
+      .left-panel{ flex:2; padding:40px; background:#fff; border:1px solid var(--ring); border-radius:8px; }
+      .left-panel h1{ color:var(--accent); font-size:2rem; margin-bottom:10px; }
+      .left-panel p{ font-size:1rem; margin-bottom:20px; color:#222; }
+      .cta{ background:var(--brand); color:#fff; padding:12px 20px; text-decoration:none; border-radius:6px; font-weight:700; display:inline-block; }
+
+      .right-panel{ flex:1; background:#fff; padding:24px; border:1px solid var(--ring); border-radius:8px; }
+      .right-panel h3{ margin-top:0; }
+      .form-group{ margin-bottom:12px; }
+      .form-group input{ width:100%; padding:10px; border:1px solid #ccc; border-radius:4px; }
+      .btn{ width:100%; padding:12px; background:var(--brand); color:#fff; border:none; border-radius:6px; font-size:1rem; font-weight:700; }
+
+      /* ===== Sections / cards ===== */
+      .section{ max-width:1200px; margin:60px auto; padding:0 30px; }
+      .grid-3{ display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:20px; }
+      .grid-2{ display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:24px; }
+      .card{ background:var(--card); border:1px solid var(--ring); border-radius:10px; box-shadow:0 1px 4px rgba(0,0,0,0.05); }
+      .card-in{ padding:20px; }
+      .feature{ padding:18px; border-radius:10px; background:#fff; border:1px solid var(--ring); }
+      .feature h3{ margin:0 0 6px; font-size:1.1rem; }
+      .tags{ display:flex; gap:8px; flex-wrap:wrap; }
+      .tag{ background:#fff; border:1px solid var(--ring); border-radius:999px; padding:6px 10px; font-size:.9rem; }
+
+      /* ===== WHITE ZONE ===== */
+      .white-zone{ background:#fff; }
+
+      /* more components */
+      .split{ display:grid; grid-template-columns:1.1fr .9fr; gap:28px; align-items:center; }
+      .split img{ width:100%; height:auto; border-radius:10px; box-shadow:0 10px 28px rgba(0,0,0,.1); }
+      .q-card{ background:#fff; border:1px solid var(--ring); border-radius:10px; padding:18px; }
+      .choices{ display:grid; gap:10px; margin-top:10px; }
+      .choice{ padding:10px; border:1px solid #d6dae3; border-radius:8px; }
+      .choice.correct{ border-color:#18a35a; background:#edfbf3; }
+      .rationale{ margin-top:10px; font-size:.95rem; color:#0f5132; }
+      .stats{ display:grid; grid-template-columns:repeat(auto-fit, minmax(220px,1fr)); gap:16px; }
+      .stat{ background:#fff; border:1px solid var(--ring); border-radius:10px; padding:16px; text-align:center; }
+      .stat b{ display:block; font-size:28px; }
+      .people{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:18px; }
+      .person{ background:#fff; border:1px solid var(--ring); border-radius:12px; padding:16px; text-align:center; }
+      .avatar{ width:76px; height:76px; border-radius:50%; background:#e9ecf5; margin:0 auto 10px; display:grid; place-items:center; font-weight:700; color:#64748b; }
+      .timeline{ display:grid; gap:14px; }
+      .step{ background:#fff; border:1px solid var(--ring); border-radius:10px; padding:14px 16px; }
+      .testimonials{ display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:20px; }
+      .testimonial{ background:#fff; padding:20px; border-radius:10px; border:1px solid var(--ring); font-style:italic; }
+      .by{ margin-top:8px; color:#6b7280; font-style:normal; }
+      .pricing{ display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:20px; }
+      .price-card{ background:#fff; padding:22px; border-radius:12px; border:2px solid var(--ring); text-align:center; }
+      .price{ font-size:32px; font-weight:800; margin:6px 0 2px; }
+      .small{ font-size:.9rem; color:#6b7280; }
+      .table-wrap{ overflow:auto; background:#fff; border:1px solid var(--ring); border-radius:10px; }
+      table{ border-collapse:collapse; width:100%; min-width:680px; }
+      th, td{ border-bottom:1px solid var(--ring); padding:12px 14px; text-align:left; }
+      th{ background:#fafafa; }
+      .faq-item{ background:#fff; padding:15px; border-radius:10px; border:1px solid var(--ring); margin-bottom:10px; }
+      .cta-band{ background:var(--accent); color:#fff; text-align:center; padding:50px 20px; border-radius:12px; }
+      .cta-band .cta{ background:#fff; color:var(--accent); }
+      .blog{ display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:18px; }
+      .post{ background:#fff; border:1px solid var(--ring); border-radius:10px; padding:16px; }
+      .contact{ display:grid; grid-template-columns:1.1fr .9fr; gap:18px; }
+      .contact form .row{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+      .input, textarea{ width:100%; padding:10px; border:1px solid #cfd5e1; border-radius:8px; }
+      textarea{ min-height:110px; }
+      footer{ text-align:center; padding:18px; background:#f1f1f1; font-size:0.9rem; color:#555; border-top:1px solid #ddd; }
+
+      @media (max-width: 900px){
+        .search{ width:220px }
+        .main{ flex-direction:column }
+        .split{ grid-template-columns:1fr }
+        .contact{ grid-template-columns:1fr }
+      }
+    </style>
+  </head>
+  <body>
+
+    <!-- Top band -->
+    <div class="topband">
+      <div class="topband-in">
+        <nav class="tabs" id="tabs">
+          <a href="#" class="active">Students</a>
+          <a href="#">Educators</a>
+          <a href="#">Clinics</a>
+          <a href="#">Continuing Education</a>
+          <a href="#">About</a>
+          <a href="#">Resources</a>
+        </nav>
+        <div class="top-right">
+          <span>Exam Offers</span><span class="flag" aria-hidden="true"></span><span>English</span>
+        </div>
+      </div>
+      <div class="bridge"></div>
+    </div>
+
+    <!-- Subheader -->
+    <div class="subhead">
+      <div class="subhead-in">
+        <div class="logo-word">Radiography Practice Exams</div>
+        <div class="search-wrap">
+          <label class="search">
+            <input type="text" placeholder="Search exams, topics, or tips"/><span aria-hidden="true">🔍</span>
+          </label>
+          <span class="icon" title="Locations">📍</span>
+          <span class="icon" title="Help">❓</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Category row -->
+    <div class="catnav">
+      <div class="catnav-in">
+        <a href="/test-center">Practice Exams</a>
+        <a href="/user/results">My Results</a>
+        <a href="/study-guides">Study Guides</a>
+        <a href="/pricing">Pricing</a>
+        <a href="/help">Help</a>
+      </div>
+    </div>
+
+    <!-- HERO (light grey background) -->
+    <div class="hero-wrap">
+      <div class="hero-in">
+        <div class="main">
+          <div class="left-panel">
+            <h1>Pass Your Radiography Certification</h1>
+            <p>Access a comprehensive library of practice exams for ARRT®/CAMRT Radiography. Simulate real test timing, review image-based explanations, and track weak areas with analytics.</p>
+            <a href="/test-center" class="cta">Start Your First Practice Exam</a>
+          </div>
+
+          <!-- EMAIL-ONLY SIGN IN -->
+          <div class="right-panel">
+            <h3>Sign in to Your Exam Account</h3>
+            <form id="emailSignInForm" autocomplete="email">
+              <div class="form-group">
+                <input type="email" name="email" id="signinEmail" placeholder="Email Address" required>
+              </div>
+              <button type="submit" class="btn">Sign In</button>
+            </form>
+            <p style="margin-top:10px; font-size:0.9rem;">
+              New to the platform? <a href="/register">Create your free exam account</a>
+            </p>
+            <div id="signinMsg" style="margin-top:8px; font-size:.9rem; color:#b32833;"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- WHITE ZONE: everything else -->
+    <div class="white-zone">
+      <section class="section">
+        <h2>Built by technologists, engineered for exam day</h2>
+        <p>We combine realistic, image-heavy questions with instant feedback and performance analytics so you always know what to study next.</p>
+        <div class="grid-3">
+          <div class="feature"><h3>Real Exam Simulation</h3><p>Timed and untimed modes mirror ARRT®/CAMRT structure, including image-based items and mixed difficulty.</p></div>
+          <div class="feature"><h3>Granular Analytics</h3><p>See item difficulty, topic breakdowns, and time-per-question to focus where it matters most.</p></div>
+          <div class="feature"><h3>Explain Like an Instructor</h3><p>Clear rationales and references after each question build understanding, not just memory.</p></div>
+        </div>
+        <div class="tags" style="margin-top:14px;">
+          <span class="tag">Positioning</span><span class="tag">Radiation Protection</span><span class="tag">Physics</span>
+          <span class="tag">Anatomy</span><span class="tag">Pathology</span><span class="tag">Quality Control</span>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="split">
+          <img src="/chest.jpg" alt="Exam interface screenshot (question & image viewer)">
+          <div>
+            <h2>Feels like the real exam—only smarter</h2>
+            <p>Flag questions for review, view images fullscreen, and switch between timed or study modes. Your progress auto-saves so you can resume anytime.</p>
+            <ul>
+              <li>Question review mode with rationales and references</li>
+              <li>Keyboard shortcuts for faster navigation</li>
+              <li>Mobile-friendly interface</li>
+            </ul>
+            <a href="/test-center" class="cta" style="margin-top:10px">Browse Practice Exams</a>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Try a sample question</h2>
+        <div class="q-card">
+          <strong>A PA chest projection demonstrates the clavicles projecting above the apices. What positioning error is most likely?</strong>
+          <div class="choices">
+            <div class="choice">A) Insufficient SID</div>
+            <div class="choice correct">B) Patient was lordotic (chin/chest raised)</div>
+            <div class="choice">C) Excessive rotation toward the left</div>
+            <div class="choice">D) Incorrect central ray angle caudad</div>
+          </div>
+          <div class="rationale">Correct: <b>B</b>. Lordotic positioning elevates clavicles, projecting them above lung apices. Ensure chin lowered and shoulders rolled forward.</div>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Outcomes that matter</h2>
+        <div class="stats">
+          <div class="stat"><b>1,200+</b>Image-based items</div>
+          <div class="stat"><b>95%</b>Report higher confidence</div>
+          <div class="stat"><b>24/7</b>Access on any device</div>
+          <div class="stat"><b>Real-time</b>Analytics & trends</div>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Know exactly where to focus</h2>
+        <div class="grid-2">
+          <div class="card"><div class="card-in"><h3>Topic heatmaps</h3><p>See accuracy by topic and projection to prioritize study time.</p></div></div>
+          <div class="card"><div class="card-in"><h3>Timing insights</h3><p>Identify questions that consistently take longer than average.</p></div></div>
+          <div class="card"><div class="card-in"><h3>Distractor analysis</h3><p>Review which wrong choices you pick most and why.</p></div></div>
+          <div class="card"><div class="card-in"><h3>Progress trends</h3><p>Track improvement week over week to stay on pace.</p></div></div>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Meet your instructors</h2>
+        <div class="people">
+          <div class="person"><div class="avatar">DT</div><b>Doung Tran, MRT(R)</b><div class="small">Positioning & QC</div></div>
+          <div class="person"><div class="avatar">CH</div><b>Cathy Hu, BSc, MRT(R)</b><div class="small">Physics & Protection</div></div>
+          <div class="person"><div class="avatar">JS</div><b>Jordan Singh, RT(R)</b><div class="small">Anatomy & Pathology</div></div>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Your 4-week game plan</h2>
+        <div class="timeline">
+          <div class="step"><b>Week 1:</b> Baseline timed exam + review rationales. Identify top 3 weak areas.</div>
+          <div class="step"><b>Week 2:</b> Drill targeted sets on weak topics. Study mode with notes.</div>
+          <div class="step"><b>Week 3:</b> Mix of timed and untimed. Focus on pacing & image interpretation.</div>
+          <div class="step"><b>Week 4:</b> Full mock exam + final review of flagged questions.</div>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>What students say</h2>
+        <div class="testimonials">
+          <div class="testimonial">“The image explanations finally made positioning ‘click.’ The analytics showed exactly what to fix before exam day.”<div class="by">— Doung T.</div></div>
+          <div class="testimonial">“The simulator felt like the real test. Reviewing every wrong answer with references was huge.”<div class="by">— Cathy H.</div></div>
+          <div class="testimonial">“Went from 62% to 83% in three weeks. Timing charts helped me stop rushing.”<div class="by">— Priya R.</div></div>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Choose your plan</h2>
+        <div class="pricing">
+          <div class="price-card">
+            <h3>Free</h3>
+            <div class="price">$0</div>
+            <div class="small">Starter access</div>
+            <ul style="text-align:left; line-height:1.6;">
+              <li>2 practice exams</li>
+              <li>Basic analytics</li>
+              <li>Limited explanations</li>
+            </ul>
+            <a href="/register" class="cta" style="margin-top:10px;">Get Started</a>
+          </div>
+          <div class="price-card">
+            <h3>Pro</h3>
+            <div class="price">$29/mo</div>
+            <div class="small">Most popular</div>
+            <ul style="text-align:left; line-height:1.6;">
+              <li>Unlimited exams</li>
+              <li>Full explanations & references</li>
+              <li>Advanced analytics</li>
+            </ul>
+            <a href="/pricing" class="cta" style="margin-top:10px;">Upgrade</a>
+          </div>
+          <div class="price-card">
+            <h3>Premium</h3>
+            <div class="price">$49/mo</div>
+            <div class="small">For power users</div>
+            <ul style="text-align:left; line-height:1.6;">
+              <li>Everything in Pro</li>
+              <li>Priority support</li>
+              <li>Extra image libraries</li>
+            </ul>
+            <a href="/pricing" class="cta" style="margin-top:10px;">Go Premium</a>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>How we compare</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Feature</th><th>Our Platform</th><th>Generic Question Bank</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>Image-based items</td><td>Extensive, exam-style</td><td>Limited or none</td></tr>
+              <tr><td>Explanations</td><td>Instructor-written with references</td><td>Short or missing</td></tr>
+              <tr><td>Analytics</td><td>Topic, timing, distractor analysis</td><td>Basic scoring only</td></tr>
+              <tr><td>Exam Simulation</td><td>Timed/untimed, flags, review</td><td>Static quizzes</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Frequently asked questions</h2>
+        <div class="faq-item"><h3>Is this affiliated with ARRT® or CAMRT®?</h3><p>No. We are independent and our content is aligned to publicly available blueprints.</p></div>
+        <div class="faq-item"><h3>Can I cancel anytime?</h3><p>Yes—subscriptions are month-to-month.</p></div>
+        <div class="faq-item"><h3>Do you offer group pricing?</h3><p>Yes—contact us for educator/clinic plans.</p></div>
+      </section>
+
+      <section class="section">
+        <h2>Latest study tips</h2>
+        <div class="blog">
+          <div class="post"><b>Mastering chest positioning</b><p class="small">Landmarks, rotation checks, and common pitfalls.</p><a href="/blog/chest-positioning" class="cta" style="padding:8px 12px; font-size:.95rem;">Read</a></div>
+          <div class="post"><b>Beat the clock: pacing strategies</b><p class="small">How to avoid spending too long on image-heavy items.</p><a href="/blog/pacing" class="cta" style="padding:8px 12px; font-size:.95rem;">Read</a></div>
+          <div class="post"><b>Radiation protection myths</b><p class="small">What matters, what doesn’t, and how it’s tested.</p><a href="/blog/protection-myths" class="cta" style="padding:8px 12px; font-size:.95rem;">Read</a></div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="cta-band">
+          <h2>Your Essential Training & Exam Prep for ARRT®/CAMRT Radiography</h2>
+          <p>Start free, then upgrade when you’re ready. No credit card needed to practice.</p>
+          <a href="/register" class="cta">Create Free Account</a>
+        </div>
+      </section>
+    </div><!-- /white-zone -->
+
+    <footer>
+      © 2025 Radiography Practice Exam Platform — Prepare · Practice · Succeed
+    </footer>
+
+    <script>
+      // visual tab toggle only
+      document.querySelectorAll('#tabs a').forEach(a => {
+        a.addEventListener('click', e => {
+          e.preventDefault();
+          document.querySelectorAll('#tabs a').forEach(t => t.classList.remove('active'));
+          a.classList.add('active');
+        });
+      });
+
+      // email-only sign-in → redirect to /test-center if email exists
+      const signInForm = document.getElementById('emailSignInForm');
+      if (signInForm) {
+        signInForm.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const email = document.getElementById('signinEmail').value.trim();
+          const msg = document.getElementById('signinMsg');
+          msg.textContent = '';
+
+          if (!email) { msg.textContent = 'Please enter your email.'; return; }
+
+          try {
+            const res = await fetch('/signin-email', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ email })
+            });
+            const data = await res.json();
+
+            if (data.success) {
+              window.location.href = '/test-center';
+            } else {
+              msg.textContent = data.message || 'Email not found. Please create an account.';
+            }
+          } catch (err) {
+            msg.textContent = 'Something went wrong. Please try again.';
+          }
+        });
+      }
+    </script>
+  </body>
+  </html>
+  `);
+});
+
+
 // ✅ Start Server
 app.listen(port, () => {
   console.log(`🚀 Radiography Assistant running at http://localhost:${port}`);
