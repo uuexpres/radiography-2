@@ -20,7 +20,7 @@ const { Server } = require('socket.io');
 const io = new Server(server);
 
 // ✅ Port
-const port = 3071;
+const port = 3073;
 
 
 // ✅ Middleware Setup
@@ -597,114 +597,52 @@ app.get('/debug-log/questions', async (req, res) => {
   }
 });
 
-
+// ✅ Upload Form (R in CRUD → Read Tests so admin can pick one)
+// ✅ Upload Form Route (Frontend + Logging)
 app.get('/upload-form', async (req, res) => {
-  const tests = await Test.find().sort({ title: 1 });
+  console.log('\n===== [ROUTE HIT] GET /upload-form =====');
+  console.log('🗂️ CRUD OPERATION: READ');
+  console.log('📦 Collection: Test');
 
-  res.send(`<!DOCTYPE html>
+  try {
+    // 🔎 DB Query Start
+    console.time('⏱️ Data Access: Test.find()');
+    const tests = await Test.find().sort({ title: 1 });
+    console.timeEnd('⏱️ Data Access: Test.find()');
+
+    // 🔎 DB Query Results
+    console.log(`✅ Data Access: Retrieved ${tests.length} test documents from MongoDB`);
+    
+    if (tests.length > 0) {
+      console.log('📋 Sample test titles:', tests.map(t => t.title).slice(0, 3));
+      console.log('🆔 Sample test IDs:', tests.map(t => t._id.toString()).slice(0, 3));
+      console.log('📅 Sample createdAt:', tests.map(t => t.createdAt).slice(0, 3));
+    } else {
+      console.log('⚠️ No test documents found in the collection.');
+    }
+
+    // 🔎 Render HTML Form
+    console.log('🖥️ Rendering HTML upload form to client...');
+    res.send(`<!DOCTYPE html>
 <html>
 <head>
   <title>Upload Questions</title>
   <style>
-    body {
-      font-family: Arial, sans-serif;
-      background: #f8f9fb;
-      margin: 0;
-      display: flex;
-    }
-
-    .sidebar {
-      width: 220px;
-      background: #ffffff;
-      padding: 20px;
-      height: 100vh;
-      border-right: 1px solid #ddd;
-    }
-
-    .sidebar h2 {
-      font-size: 18px;
-      color: #0f1f3e;
-      margin-bottom: 20px;
-    }
-
-    .sidebar nav {
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-    }
-
-    .sidebar nav a {
-      text-decoration: none;
-      color: #0f1f3e;
-      font-size: 14px;
-    }
-
-    .sidebar nav a:hover {
-      text-decoration: underline;
-    }
-
-    .main {
-      flex: 1;
-      padding: 40px;
-      background: #ffffff;
-    }
-
-    .card {
-      background: #0f1f3e;
-      color: white;
-      padding: 20px;
-      border-radius: 12px;
-      margin-bottom: 30px;
-    }
-
-    .card h3 {
-      margin-top: 0;
-    }
-
-    h2 {
-      color: #0f1f3e;
-      margin-bottom: 20px;
-    }
-
-    form {
-      background: #ffffff;
-      padding: 30px;
-      border-radius: 8px;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.05);
-      max-width: 500px;
-    }
-
-    label {
-      font-weight: bold;
-      display: block;
-      margin-top: 15px;
-      color: #333;
-    }
-
-    select, input[type="file"] {
-      margin-top: 8px;
-      width: 100%;
-      padding: 10px;
-      font-size: 14px;
-      border: 1px solid #ccc;
-      border-radius: 6px;
-    }
-
-    button {
-      margin-top: 20px;
-      padding: 10px 20px;
-      background: #007bff;
-      color: white;
-      border: none;
-      border-radius: 6px;
-      font-size: 14px;
-      font-weight: bold;
-      cursor: pointer;
-    }
-
-    button:hover {
-      background: #0056b3;
-    }
+    body { font-family: Arial, sans-serif; background: #f8f9fb; margin: 0; display: flex; }
+    .sidebar { width: 220px; background: #ffffff; padding: 20px; height: 100vh; border-right: 1px solid #ddd; }
+    .sidebar h2 { font-size: 18px; color: #0f1f3e; margin-bottom: 20px; }
+    .sidebar nav { display: flex; flex-direction: column; gap: 12px; }
+    .sidebar nav a { text-decoration: none; color: #0f1f3e; font-size: 14px; }
+    .sidebar nav a:hover { text-decoration: underline; }
+    .main { flex: 1; padding: 40px; background: #ffffff; }
+    .card { background: #0f1f3e; color: white; padding: 20px; border-radius: 12px; margin-bottom: 30px; }
+    .card h3 { margin-top: 0; }
+    h2 { color: #0f1f3e; margin-bottom: 20px; }
+    form { background: #ffffff; padding: 30px; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.05); max-width: 500px; }
+    label { font-weight: bold; display: block; margin-top: 15px; color: #333; }
+    select, input[type="file"] { margin-top: 8px; width: 100%; padding: 10px; font-size: 14px; border: 1px solid #ccc; border-radius: 6px; }
+    button { margin-top: 20px; padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 6px; font-size: 14px; font-weight: bold; cursor: pointer; }
+    button:hover { background: #0056b3; }
   </style>
 </head>
 <body>
@@ -739,31 +677,97 @@ app.get('/upload-form', async (req, res) => {
   </div>
 </body>
 </html>`);
+    console.log('✅ HTML response successfully sent to client.');
+  } catch (err) {
+    console.error('💥 ERROR in GET /upload-form (Data Access failure):', err);
+    res.status(500).send('Error loading upload form');
+  }
 });
 
+/// ✅ Route: Upload Questions via Excel
 app.post('/upload-question', upload.single('xlsxFile'), async (req, res) => {
-  const { testId } = req.body;
-  const workbook = xlsx.readFile(req.file.path);
-  const sheet = workbook.Sheets[workbook.SheetNames[0]];
-  const data = xlsx.utils.sheet_to_json(sheet);
+  console.log('\n===== [ROUTE HIT] POST /upload-question =====');
+  console.log('🗂️ CRUD OPERATION: CREATE');
+  console.log('📦 Collection: Question');
+  console.log('📥 File uploaded:', req.file?.originalname || 'No file');
+  console.log('📥 Target TestId:', req.body.testId);
 
-  const bulk = data.map(row => {
-    const choices = [row.A, row.B, row.C, row.D];
+  try {
+    // ✅ Parse Excel
+    console.time('⏱️ Excel Parsing');
+    const workbook = xlsx.readFile(req.file.path);
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const data = xlsx.utils.sheet_to_json(sheet);
+    console.timeEnd('⏱️ Excel Parsing');
+    console.log(`📊 Rows extracted from Excel: ${data.length}`);
 
-    return {
-      title: row.Question,
-      choices,
-      correctAnswer: row['Correct Answer'],
-      category: row.Category || 'General',
-      testId,
-      assignedAt: new Date(),
-      choiceCounts: Array(choices.length).fill(0) // ✅ Initialize vote counts
-    };
-  });
+    // ✅ Transform to Question documents
+    const bulk = data.map((row, i) => {
+      const choices = [row.A, row.B, row.C, row.D].filter(Boolean);
 
-  await Question.insertMany(bulk);
+      const doc = {
+        testId: req.body.testId,
+        title: row.Question,
+        choices,
+        correctAnswer: row['Correct Answer'],
+        explanation: row.Explanation || '',
+        category: row.Category || 'General',
+        imageUrls: [], // can extend later
+        imageLabels: [],
+        assignedAt: new Date(),
+        createdAt: new Date(),
+        choiceCounts: Array(choices.length).fill(0)
+      };
 
-  res.send(`<p>✅ Questions uploaded with vote tracking initialized. <a href="/upload-form">Upload More</a></p>`);
+      console.log(`\n📌 [Row ${i + 1}] Parsed Question:`);
+      console.log({
+        testId: doc.testId,
+        title: doc.title,
+        choices: doc.choices,
+        correctAnswer: doc.correctAnswer,
+        explanation: doc.explanation,
+        category: doc.category
+      });
+
+      return doc;
+    });
+
+    // ✅ Insert into MongoDB
+    console.time('⏱️ MongoDB Insert');
+    const inserted = await Question.insertMany(bulk);
+    console.timeEnd('⏱️ MongoDB Insert');
+
+    console.log(`✅ Successfully inserted ${inserted.length} questions`);
+    console.log('🆔 Sample inserted IDs:', inserted.slice(0, 3).map(q => q._id.toString()));
+
+    // ✅ Customer-facing HTML response
+    res.send(`<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Upload Complete</title>
+  <style>
+    body { font-family: Arial, sans-serif; background: #f8f9fb; margin: 0; padding: 40px; }
+    .card { background: #ffffff; padding: 30px; border-radius: 12px; box-shadow: 0 2px 6px rgba(0,0,0,0.08); max-width: 600px; margin: auto; text-align: center; }
+    h2 { color: #0f1f3e; margin-bottom: 20px; }
+    p { font-size: 16px; color: #333; }
+    a { display: inline-block; margin-top: 20px; text-decoration: none; padding: 10px 20px; background: #0f1f3e; color: white; border-radius: 8px; }
+    a:hover { background: #1e3a8a; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>✅ Upload Successful</h2>
+    <p>${inserted.length} questions have been uploaded and saved with vote tracking initialized.</p>
+    <a href="/upload-form">📤 Upload More</a>
+    <a href="/admin/questions">🧠 Manage Questions</a>
+  </div>
+</body>
+</html>`);
+  } catch (err) {
+    console.error('💥 ERROR in POST /upload-question:', err);
+    res.status(500).send(`<p>❌ Error uploading questions. Please try again. <a href="/upload-form">Back</a></p>`);
+  }
 });
 
 
@@ -878,209 +882,248 @@ app.get('/admin/questions', async (req, res) => {
   `);
 });
 
+// ✅ GET: Edit Question Detail (with HTML + CSS preserved + logs)
 app.get('/edit-question-detail/:id', async (req, res) => {
   const questionId = req.params.id;
-  const question = await Question.findById(questionId);
-  const tests = await Test.find().sort({ title: 1 });
+  console.log("\n===== [ROUTE HIT] GET /edit-question-detail =====");
+  console.log("📦 Params:", { questionId });
 
-  // Extract choices and explanations, with fallbacks for empty
-  const [a, b, c, d] = question.choices || ['', '', '', ''];
-  const [expA, expB, expC, expD] = question.optionExplanations || ['', '', '', ''];
-  const [countA, countB, countC, countD] = question.choiceCounts || [0, 0, 0, 0];
+  try {
+    console.log("🔍 CRUD READ → Question.findById");
+    const question = await Question.findById(questionId);
+    console.log("✅ Data Access → Collection: Question | Found:", !!question);
 
-  const testOptions = tests.map(t => `
-    <option value="${t._id}" ${question.testId && question.testId.toString() === t._id.toString() ? 'selected' : ''}>
-      ${t.title}
-    </option>
-  `).join('');
+    console.log("🔍 CRUD READ → Test.find()");
+    const tests = await Test.find().sort({ title: 1 });
+    console.log("✅ Data Access → Collection: Test | Count:", tests.length);
 
-  const imagePreviewHTML = (question.imageUrls || []).map((url, i) => {
-    const label = question.imageLabels?.[i] || `Image ${i + 1}`;
-    return `
-      <div class="preview">
-        <strong>${label}:</strong><br>
-        <img src="/uploads/${url}" style="max-width: 300px; margin-bottom: 10px;" />
-      </div>
-    `;
-  }).join('');
-
-  res.send(`
-<!DOCTYPE html>
-<html>
-<head>
-  <title>Edit Question</title>
-  <style>
-    body { margin: 0; font-family: Arial, sans-serif; display: flex; background: #f8f9fb; }
-    .sidebar { width: 220px; background: #fff; padding: 20px; height: 100vh; border-right: 1px solid #ddd; }
-    .main { flex: 1; padding: 40px; background: #fff; }
-    .card { background: #0f1f3e; color: white; padding: 20px; border-radius: 12px; margin-bottom: 30px; }
-    label { display: block; margin-top: 10px; font-weight: bold; color: #333; }
-    input[type="text"], input[type="number"], textarea, select, input[type="file"] {
-      width: 100%; padding: 8px; font-size: 14px; margin-top: 5px; border: 1px solid #ccc; border-radius: 6px;
+    if (!question) {
+      console.log("❌ Question not found");
+      return res.status(404).send("❌ Question not found");
     }
-    textarea { min-height: 34px; }
-    button { margin-top: 25px; padding: 12px 24px; font-size: 16px; font-weight: bold; background: #28a745; color: white; border: none; border-radius: 6px; cursor: pointer; }
-    button:hover { background: #218838; }
-    img { margin-top: 10px; border: 1px solid #ccc; border-radius: 6px; }
-    .form-section { margin-bottom: 20px; }
-    .option-block { background: #f5f6fa; padding: 16px 14px 10px 14px; border-radius: 8px; margin-bottom: 12px; }
-    .option-block label:first-child { font-size: 15px; }
-  </style>
-</head>
-<body>
-  <div class="sidebar">
-    <h2>🩻 Radiography</h2>
-    <nav>
-      <a href="/admin/tests">📋 Manage Tests</a>
-      <a href="/admin/create-test">➕ Create Test</a>
-      <a href="/admin/questions">🧠 Manage Questions</a>
-      <a href="/upload-form">📤 Upload Excel</a>
-    </nav>
-  </div>
 
-  <div class="main">
-    <div class="card">
-      <h3>✏️ Edit Question</h3>
-    </div>
+    // --- Extract fields for UI ---
+    const [a, b, c, d] = question.choices || ['', '', '', ''];
+    const [expA, expB, expC, expD] = question.optionExplanations || ['', '', '', ''];
+    const [countA, countB, countC, countD] = question.choiceCounts || [0, 0, 0, 0];
 
-    <form action="/update-question-detail/${question._id}" method="POST" enctype="multipart/form-data">
+    const testOptions = tests.map(t => `
+      <option value="${t._id}" ${question.testId && question.testId.toString() === t._id.toString() ? 'selected' : ''}>
+        ${t.title}
+      </option>
+    `).join('');
 
-      <div class="form-section">
-        <label for="title">Question Text:</label>
-        <textarea name="title" rows="3" required>${question.title}</textarea>
-      </div>
-
-      <!-- Option blocks: Each has answer and explanation mapped together -->
-      <div class="form-section">
-        <div class="option-block">
-          <label>Option A:</label>
-          <input type="text" name="a" value="${a}" required>
-          <label style="font-weight:400;color:#555;">Explanation for Option A:</label>
-          <textarea name="explainA" rows="2" placeholder="Explanation for Option A...">${expA}</textarea>
+    const imagePreviewHTML = (question.imageUrls || []).map((url, i) => {
+      const label = question.imageLabels?.[i] || `Image ${i + 1}`;
+      return `
+        <div class="preview">
+          <strong>${label}:</strong><br>
+          <img src="/uploads/${url}" />
         </div>
-        <div class="option-block">
-          <label>Option B:</label>
-          <input type="text" name="b" value="${b}" required>
-          <label style="font-weight:400;color:#555;">Explanation for Option B:</label>
-          <textarea name="explainB" rows="2" placeholder="Explanation for Option B...">${expB}</textarea>
-        </div>
-        <div class="option-block">
-          <label>Option C:</label>
-          <input type="text" name="c" value="${c}" required>
-          <label style="font-weight:400;color:#555;">Explanation for Option C:</label>
-          <textarea name="explainC" rows="2" placeholder="Explanation for Option C...">${expC}</textarea>
-        </div>
-        <div class="option-block">
-          <label>Option D:</label>
-          <input type="text" name="d" value="${d}" required>
-          <label style="font-weight:400;color:#555;">Explanation for Option D:</label>
-          <textarea name="explainD" rows="2" placeholder="Explanation for Option D...">${expD}</textarea>
-        </div>
-      </div>
+      `;
+    }).join('');
 
-      <div class="form-section">
-        <label>Correct Answer:</label>
-        <select name="correctAnswer" required>
-          <option value="A" ${question.correctAnswer === 'A' ? 'selected' : ''}>A</option>
-          <option value="B" ${question.correctAnswer === 'B' ? 'selected' : ''}>B</option>
-          <option value="C" ${question.correctAnswer === 'C' ? 'selected' : ''}>C</option>
-          <option value="D" ${question.correctAnswer === 'D' ? 'selected' : ''}>D</option>
-        </select>
-      </div>
+    // ✅ Send HTML response
+    res.send(`
+    <!doctype html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <title>Edit Question</title>
+      <style>
+        body { font-family: Arial, sans-serif; background:#f7f7f7; padding:20px; }
+        .container { max-width:900px; margin:auto; background:white; padding:20px; border-radius:12px; box-shadow:0 2px 6px rgba(0,0,0,0.1); }
+        h2 { margin-top:0; }
+        label { font-weight:bold; display:block; margin-top:12px; }
+        input, select, textarea { width:100%; padding:8px; margin-top:4px; border:1px solid #ccc; border-radius:6px; }
+        textarea { min-height:60px; }
+        .choices { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+        .counts { display:grid; grid-template-columns:repeat(4, 1fr); gap:10px; margin-top:10px; }
+        .btn { display:inline-block; background:#0f1f3e; color:white; padding:10px 20px; border-radius:8px; text-decoration:none; margin-top:20px; }
+        .btn:hover { background:#17305a; }
+        img { max-width:300px; margin:10px 0; border:1px solid #ccc; border-radius:8px; }
+        .preview { margin-top:10px; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <h2>Edit Question</h2>
+        <form action="/update-question-detail/${question._id}" method="POST" enctype="multipart/form-data">
 
-      <div class="form-section">
-        <label>Assign to Test:</label>
-        <select name="testId" required>
-          <option value="">— Select Test —</option>
-          ${testOptions}
-        </select>
-      </div>
+          <label>Test</label>
+          <select name="testId">${testOptions}</select>
 
-      <div class="form-section">
-        <label>General Explanation:</label>
-        <textarea name="explanation" rows="4">${question.explanation || ''}</textarea>
-      </div>
+          <label>Question</label>
+          <textarea name="title">${question.title}</textarea>
 
-      <div class="form-section">
-        <label>Choice Counts (Votes per Option):</label>
-        <label>A Votes:</label><input type="number" name="countA" value="${countA}" min="0">
-        <label>B Votes:</label><input type="number" name="countB" value="${countB}" min="0">
-        <label>C Votes:</label><input type="number" name="countC" value="${countC}" min="0">
-        <label>D Votes:</label><input type="number" name="countD" value="${countD}" min="0">
-      </div>
+          <div class="choices">
+            <div>
+              <label>Choice A</label>
+              <input type="text" name="a" value="${a}" />
+              <label>Explanation A</label>
+              <textarea name="explainA">${expA}</textarea>
+            </div>
+            <div>
+              <label>Choice B</label>
+              <input type="text" name="b" value="${b}" />
+              <label>Explanation B</label>
+              <textarea name="explainB">${expB}</textarea>
+            </div>
+            <div>
+              <label>Choice C</label>
+              <input type="text" name="c" value="${c}" />
+              <label>Explanation C</label>
+              <textarea name="explainC">${expC}</textarea>
+            </div>
+            <div>
+              <label>Choice D</label>
+              <input type="text" name="d" value="${d}" />
+              <label>Explanation D</label>
+              <textarea name="explainD">${expD}</textarea>
+            </div>
+          </div>
 
-      <div class="form-section">
-        <label>Upload Reference Images:</label>
-        <input type="file" name="referenceImages" accept="image/*" multiple />
-        <label>Upload Explanation Images:</label>
-        <input type="file" name="explanationImages" accept="image/*" multiple />
-        <label>Image Labels (comma-separated):</label>
-        <input type="text" name="imageLabels" value="${(question.imageLabels || []).join(', ')}" />
-        ${imagePreviewHTML}
-      </div>
+          <label>Correct Answer</label>
+          <input type="text" name="correctAnswer" value="${question.correctAnswer}" />
 
-      <button type="submit">💾 Save Changes</button>
-    </form>
-  </div>
-</body>
-</html>
-  `);
+          <label>General Explanation</label>
+          <textarea name="explanation">${question.explanation || ''}</textarea>
+
+          <div class="counts">
+            <div><label>Count A</label><input type="number" name="countA" value="${countA}" /></div>
+            <div><label>Count B</label><input type="number" name="countB" value="${countB}" /></div>
+            <div><label>Count C</label><input type="number" name="countC" value="${countC}" /></div>
+            <div><label>Count D</label><input type="number" name="countD" value="${countD}" /></div>
+          </div>
+
+          <label>Image Labels (comma separated)</label>
+          <input type="text" name="imageLabels" value="${question.imageLabels?.join(', ') || ''}" />
+
+          <label>Upload Reference Images</label>
+          <input type="file" name="referenceImages" multiple />
+
+          <label>Upload Explanation Images</label>
+          <input type="file" name="explanationImages" multiple />
+
+          ${imagePreviewHTML}
+
+          <button type="submit" class="btn">💾 Save Question</button>
+        </form>
+      </div>
+    </body>
+    </html>
+    `);
+
+  } catch (err) {
+    console.error("❌ Error in GET /edit-question-detail:", err);
+    res.status(500).send("Internal Server Error");
+  }
 });
 
 
-app.post('/update-question-detail/:id', uploadMultiple, async (req, res) => {
+// ✅ POST: Update Question Detail
+app.post('/update-question-detail/:id', upload.fields([
+  { name: 'referenceImages' },
+  { name: 'explanationImages' }
+]), async (req, res) => {
+  const questionId = req.params.id;
+  console.log("\n===== [ROUTE HIT] POST /update-question-detail =====");
+  console.log("📦 Params:", { questionId });
+  console.log("📩 Body:", req.body);
+
   try {
-    const questionId = req.params.id;
+    console.log("🔍 CRUD READ → Question.findById");
     const question = await Question.findById(questionId);
-    if (!question) return res.status(404).send('❌ Question not found');
+    console.log("✅ Data Access → Collection: Question | Found:", !!question);
 
-    // ✅ Extract form fields (including explanations for each option)
-    const {
-      title, a, b, c, d,
-      explainA, explainB, explainC, explainD,
-      correctAnswer, testId, explanation,
-      countA, countB, countC, countD,
-      imageLabels
-    } = req.body;
+    if (!question) {
+      console.log("❌ Question not found");
+      return res.status(404).send("❌ Question not found");
+    }
 
-    // ✅ Update basic fields
-    question.title = title;
-    question.choices = [a, b, c, d];
-    question.optionExplanations = [explainA, explainB, explainC, explainD];
-    question.correctAnswer = correctAnswer;
-    question.testId = testId;
-    question.explanation = explanation;
-    question.choiceCounts = [
-      parseInt(countA) || 0,
-      parseInt(countB) || 0,
-      parseInt(countC) || 0,
-      parseInt(countD) || 0
+    // --- Update fields from form ---
+    question.testId = req.body.testId || question.testId;
+    question.title = req.body.title || question.title;
+
+    // Update choices
+    question.choices = [req.body.a, req.body.b, req.body.c, req.body.d];
+
+    // Update option explanations
+    question.optionExplanations = [
+      req.body.explainA || '',
+      req.body.explainB || '',
+      req.body.explainC || '',
+      req.body.explainD || ''
     ];
 
-    // ✅ Parse and store image labels
-    const labelArray = imageLabels ? imageLabels.split(',').map(label => label.trim()) : [];
+    // Correct Answer & General Explanation
+    question.correctAnswer = req.body.correctAnswer || question.correctAnswer;
+    question.explanation = req.body.explanation || question.explanation;
 
-    // ✅ Handle uploaded files
-    const referenceFiles = req.files['referenceImages'] || [];
-    const explanationFiles = req.files['explanationImages'] || [];
+    // Category
+    question.category = req.body.category || question.category;
 
-    // Combine new image URLs
-    const newImageUrls = [...referenceFiles, ...explanationFiles].map(f => f.filename);
-    question.imageUrls.push(...newImageUrls);
+    // Update choice counts
+    question.choiceCounts = [
+      Number(req.body.countA) || 0,
+      Number(req.body.countB) || 0,
+      Number(req.body.countC) || 0,
+      Number(req.body.countD) || 0
+    ];
 
-    // Match new labels to uploaded files (or use default if not enough labels)
-    const newLabels = labelArray.length >= newImageUrls.length
-      ? labelArray.slice(0, newImageUrls.length)
-      : newImageUrls.map((_, i) => labelArray[i] || `Image ${i + 1}`);
+    // Update image labels
+    question.imageLabels = req.body.imageLabels
+      ? req.body.imageLabels.split(",").map(l => l.trim())
+      : question.imageLabels;
 
-    question.imageLabels.push(...newLabels);
+    // Handle uploaded files
+    const uploadedFiles = [];
+    if (req.files?.referenceImages) {
+      req.files.referenceImages.forEach(file => uploadedFiles.push(file.filename));
+    }
+    if (req.files?.explanationImages) {
+      req.files.explanationImages.forEach(file => uploadedFiles.push(file.filename));
+    }
+    if (uploadedFiles.length) {
+      question.imageUrls = [...(question.imageUrls || []), ...uploadedFiles];
+    }
 
+    // --- Save the update ---
+    console.log("💾 CRUD UPDATE → Question.save()");
     await question.save();
+    console.log("✅ Question updated successfully");
 
-    res.send(`<h2>✅ Question updated successfully. <a href="/edit-question-detail/${questionId}">Go back</a></h2>`);
+    // ✅ Styled confirmation page
+    res.send(`
+    <!doctype html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <title>Question Updated</title>
+      <style>
+        body { font-family: Arial, sans-serif; background:#f7f7f7; padding:20px; }
+        .card { max-width:700px; margin:auto; background:white; padding:25px; border-radius:12px; box-shadow:0 2px 6px rgba(0,0,0,0.1); text-align:center; }
+        h2 { color:#0f1f3e; }
+        a.btn { display:inline-block; margin-top:20px; padding:10px 20px; border-radius:8px; background:#0f1f3e; color:white; text-decoration:none; }
+        a.btn:hover { background:#17305a; }
+      </style>
+    </head>
+    <body>
+      <div class="card">
+        <h2>✅ Question Updated Successfully</h2>
+        <p><strong>${question.title}</strong> has been updated.</p>
+        <a href="/edit-question-detail/${question._id}" class="btn">🔄 Edit Again</a>
+        <a href="/upload-form" class="btn">⬅️ Back to Upload Form</a>
+      </div>
+    </body>
+    </html>
+    `);
+
   } catch (err) {
-    console.error('❌ Error updating question:', err);
-    res.status(500).send('Internal Server Error');
+    console.error("❌ Error in POST /update-question-detail:", err);
+    res.status(500).send("Internal Server Error");
   }
 });
 
@@ -2263,19 +2306,22 @@ app.get('/start-test/:testId', async (req, res) => {
     }
 
     // Render now
-    render({
-      title: test.title || 'NCLEX-RN Test (Tutored, Untimed)',
-      scenario: q.scenario || '<p><b>Emergency Department</b></p><p><b>1830:</b> Scenario not provided.</p>',
-      vitals: q.vitals || '<p class="muted">No vital signs provided.</p>',
-      prompt: q.title || '',
-      choices: q.choices || [],
-      correctLetter: normalizedCorrect,
-      explanationText: q.generalExplanation || q.explanation || '',
-      choiceExps,
-      testIdForClient: testId,
-      questionId: q._id,
-      isLast
-    });
+            render({
+          title: test.title || 'NCLEX-RN Test (Tutored, Untimed)',
+          scenario: q.scenario || '<p><b>Emergency Department</b></p><p><b>1830:</b> Scenario not provided.</p>',
+          vitals: q.vitals || '<p class="muted">No vital signs provided.</p>',
+          prompt: q.title || '',
+          choices: q.choices || [],
+          correctLetter: normalizedCorrect,
+
+          // ✅ FIX: only use valid schema fields
+          explanationText: q.explanation || '',    // general explanation
+          choiceExps: choiceExps || {},            // per-option explanations
+
+          testIdForClient: testId,
+          questionId: q._id,
+          isLast
+        });
 
     console.log('✅ /start-test rendered OK in', Date.now() - t0, 'ms');
   } catch (err) {
@@ -2393,52 +2439,58 @@ app.post('/api/test-progress/answer', async (req, res) => {
   }
 });
 
-
-// POST – submit one question answer
+// ✅ POST – submit one question answer
 app.post('/submit-question', async (req, res) => {
   const { testId, questionId, index, answer } = req.body;
   const currentIndex = parseInt(index, 10);
   const userId = req.session.userId;
 
   console.log("\n===== [ROUTE HIT] POST /submit-question =====");
-  console.log("📦 Body:", { testId, questionId, index, answer });
+  console.log("📩 Request Body:", { testId, questionId, index, answer });
   console.log("💾 Session (before):", {
     hasAnswers: !!req.session.answers,
     answers: req.session.answers,
     questionTimes: req.session.questionTimes
   });
 
-  // Save answer in session
+  // Ensure session answers store
   if (!req.session.answers) req.session.answers = {};
 
-  // Normalize letter + text
-  const question = await Question.findById(questionId);
-  if (!question) {
-    console.error("❌ Question not found:", questionId);
-    return res.status(404).send("Question not found");
-  }
-
-  const answerIdx = answer.charCodeAt(0) - 65;
-  const selectedText = question.choices[answerIdx] || null;
-
-  req.session.answers[`q_${questionId}`] = {
-    letter: answer,
-    text: selectedText
-  };
-
-  console.log("📝 Saved to session:", req.session.answers[`q_${questionId}`]);
-
   try {
-    // Update vote counts
+    console.log("🗂️ CRUD OPERATION: READ (Question)");
+    const question = await Question.findById(questionId);
+    if (!question) {
+      console.error("❌ Data Access: Question not found in collection 'questions'", questionId);
+      return res.status(404).send("Question not found");
+    }
+    console.log("✅ Data Access: Question loaded", {
+      id: question._id,
+      title: question.title,
+      choicesCount: question.choices.length,
+      currentVotes: question.choiceCounts
+    });
+
+    // Normalize selected answer
+    const answerIdx = answer.charCodeAt(0) - 65;
+    const selectedText = question.choices[answerIdx] || null;
+
+    req.session.answers[`q_${questionId}`] = {
+      letter: answer,
+      text: selectedText
+    };
+    console.log("📝 Saved to session:", req.session.answers[`q_${questionId}`]);
+
+    // --- Update vote counts in DB ---
+    console.log("🗂️ CRUD OPERATION: UPDATE (Question.voteCounts)");
     if (!Array.isArray(question.choiceCounts) || question.choiceCounts.length !== question.choices.length) {
       question.choiceCounts = Array(question.choices.length).fill(0);
+      console.log("⚠️ Initialized choiceCounts:", question.choiceCounts);
     }
     question.choiceCounts[answerIdx]++;
     await question.save();
+    console.log("✅ Data Access: Updated choiceCounts →", question.choiceCounts);
 
-    console.log("📊 Updated choiceCounts:", question.choiceCounts);
-
-    // Track timing
+    // --- Track timing ---
     const now = Date.now();
     const questionStart = req.session.questionStartTime || now;
     const testStart = req.session.testStartTime || now;
@@ -2448,13 +2500,17 @@ app.post('/submit-question', async (req, res) => {
     if (!req.session.questionTimes) req.session.questionTimes = {};
     req.session.questionTimes[questionId] = timeSpent;
 
-    console.log(`⏱️ Time on question ${questionId}: ${timeSpent}s`);
-    console.log(`⏱️ Total test time so far: ${totalTime}s`);
+    console.log("⏱️ Timing Snapshot:", {
+      thisQuestion: `${timeSpent}s`,
+      totalSoFar: `${totalTime}s`,
+      testStart: new Date(testStart).toISOString()
+    });
 
-    // Update progress
+    // --- Update TestProgress ---
     if (userId) {
+      console.log("🗂️ CRUD OPERATION: UPSERT (TestProgress)");
       const totalQuestions = await Question.countDocuments({ testId });
-      await TestProgress.findOneAndUpdate(
+      const progressDoc = await TestProgress.findOneAndUpdate(
         { userId, testId },
         {
           $set: {
@@ -2464,15 +2520,21 @@ app.post('/submit-question', async (req, res) => {
             status: 'active'
           }
         },
-        { upsert: true }
+        { upsert: true, new: true }
       );
-      console.log("👤 TestProgress updated:", { userId, testId, index: currentIndex });
+      console.log("✅ Data Access: TestProgress updated", {
+        userId,
+        testId,
+        index: currentIndex,
+        total: totalQuestions,
+        progressId: progressDoc._id
+      });
     }
   } catch (err) {
-    console.error("❌ Error in submit-question:", err);
+    console.error("❌ Error in /submit-question:", err);
   }
 
-  // Redirect to next question or finalize
+  // --- Redirect Flow ---
   const totalQuestions = await Question.countDocuments({ testId });
   if (currentIndex + 1 >= totalQuestions) {
     console.log("➡️ All questions answered. Redirecting to finalize test.");
@@ -2482,6 +2544,7 @@ app.post('/submit-question', async (req, res) => {
   console.log("➡️ Redirecting to next question:", currentIndex + 1);
   return res.redirect(`/start-test/${testId}?index=${currentIndex + 1}`);
 });
+
 
 
 
@@ -2716,6 +2779,8 @@ app.post('/save-answer/:testId/:questionId', (req, res) => {
   res.json({ ok: true });
 });
 
+
+
 app.get('/', (req, res) => {
   res.send(`
   <!doctype html>
@@ -2724,6 +2789,15 @@ app.get('/', (req, res) => {
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Radiography Practice Exam Platform</title>
+     <!-- ✅ Google Analytics Tag -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-DBBY18MMH4"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-DBBY18MMH4', { 'page_path': '/' });
+    </script>
+
     <style>
       :root{
         --brand:#0f1f3e;   /* nav + primary to match login bg */
