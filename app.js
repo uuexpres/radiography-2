@@ -2780,6 +2780,32 @@ app.post('/save-answer/:testId/:questionId', (req, res) => {
 });
 
 
+// ✅ Middleware to inject GA snippet into all HTML responses
+app.use((req, res, next) => {
+  // Keep a reference to res.send
+  const oldSend = res.send;
+
+  res.send = function (data) {
+    if (typeof data === 'string' && data.includes('<head>')) {
+      const gaSnippet = `
+        <!-- ✅ Google Analytics Tag -->
+        <script async src="https://www.googletagmanager.com/gtag/js?id=G-DBBY18MMH4"></script>
+        <script>
+          window.dataLayer = window.dataLayer || [];
+          function gtag(){dataLayer.push(arguments);}
+          gtag('js', new Date());
+          gtag('config', 'G-DBBY18MMH4', { 'page_path': '${req.originalUrl}' });
+        </script>
+      `;
+      data = data.replace('<head>', `<head>\n${gaSnippet}`);
+    }
+    return oldSend.call(this, data);
+  };
+
+  next();
+});
+
+
 
 app.get('/', (req, res) => {
   res.send(`
