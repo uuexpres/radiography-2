@@ -2129,7 +2129,7 @@ app.get('/start-test/:testId', async (req, res) => {
 <body>
   <div class="barTop">
     <div class="title">${title}</div>
-    <div class="center">Bootcamp.com</div>
+   
     <div class="right"><span>⏱️ <span id="topTime">00:00</span></span><span>🧮 Question ${questionIndex + 1}</span></div>
   </div>
   <div class="barUtil">
@@ -2144,12 +2144,7 @@ app.get('/start-test/:testId', async (req, res) => {
     <div class="grid">
       <div class="leftCol">
         <div class="itemHead">Item ${questionIndex + 1}</div>
-        <div class="stemLead">The nurse in the emergency department cares for a 38-year-old male client.</div>
-
-        <div class="tabs">
-          <button class="tab active" data-tab="notes">Nurses' Notes</button>
-          <button class="tab" data-tab="vitals">Vital Signs</button>
-        </div>
+      
 
         <div class="tabBody" id="tab-notes">${scenario}</div>
         <div class="tabBody" id="tab-vitals" style="display:none">${vitals}</div>
