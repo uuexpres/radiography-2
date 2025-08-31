@@ -419,7 +419,7 @@ app.get('/login', async (req, res) => {
 
             <label class="check">
               <input type="checkbox" required>
-              <span class="muted">I agree to the Terms and consent to processing my data for account creation and test analytics.</span>
+              <span class="muted">I agree to the Terms and consent.</span>
             </label>
 
             <div style="margin-top:12px">
