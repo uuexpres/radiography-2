@@ -20,7 +20,7 @@ const { Server } = require('socket.io');
 const io = new Server(server);
 
 // ✅ Port
-const port = 3073;
+const port = 3081;
 
 
 // ✅ Middleware Setup
@@ -41,7 +41,7 @@ app.use('/hero', express.static(path.join(__dirname, 'public/hero')));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ✅ MongoDB Connection
-mongoose.connect('mongodb+srv://mac45:v47JmiGYELJymsMf@cluster0.rwhns6e.mongodb.net/radiographytestappss', {})
+mongoose.connect('mongodb+srv://mac45:v47JmiGYELJymsMf@cluster0.rwhns6e.mongodb.net/rrrad', {})
   .then(() => console.log('✅ Connected to MongoDB'))
   .catch(err => console.error('❌ MongoDB connection error:', err));
 
@@ -153,6 +153,16 @@ const storage = multer.diskStorage({
     cb(null, `${timestamp}-${sanitized}`);
   }
 });
+
+
+function isProfileComplete(u) {
+  if (!u) return false;
+  const hasName     = !!(u.name && u.name.trim());
+  const hasCountry  = !!(u.country && u.country.trim());
+  const hasState    = !!(u.state && u.state.trim());
+  const hasExamDate = !!u.examDate; // should be a valid Date
+  return hasName && hasCountry && hasState && hasExamDate;
+}
 
 
 
@@ -357,8 +367,8 @@ app.get('/login', async (req, res) => {
     <div class="grow"></div>
     <a href="/test-center">Test Center</a>
     <a href="/performance">Performance</a>
-    <a href="/about">About</a>
-    <a href="/help">Help</a>
+   
+    
     <a href="/login" aria-current="page" style="font-weight:700;opacity:1">Login</a>
   </div>
 
@@ -550,6 +560,27 @@ app.post('/login', async (req, res) => {
 app.get('/logout', (req, res) => {
   req.session.destroy();
   res.redirect('/login');
+});
+
+// ✅ Handles the POST from your sidebar form
+app.post('/logout', (req, res) => {
+  // destroy session, clear cookie, then send user to login
+  req.session.destroy(err => {
+    if (err) {
+      console.error('Logout error:', err);
+      return res.status(500).send('Logout failed');
+    }
+    res.clearCookie('connect.sid'); // default express-session cookie name
+    return res.redirect('/');
+  });
+});
+
+// (Optional) Allow GET /logout too — handy if you ever link to it
+app.get('/logout', (req, res) => {
+  req.session.destroy(() => {
+    res.clearCookie('connect.sid');
+    res.redirect('/login');
+  });
 });
 
 
@@ -2133,9 +2164,8 @@ app.get('/start-test/:testId', async (req, res) => {
     <div class="right"><span>⏱️ <span id="topTime">00:00</span></span><span>🧮 Question ${questionIndex + 1}</span></div>
   </div>
   <div class="barUtil">
-    <div class="utilLeft"><a href="#" class="utilLink" id="calcBtn">🧮 Calculator</a></div>
+    <div class="utilLeft"><a href="#" class="utilLink" id="calcBtn">🧮</a></div>
     <div class="utilRight">
-      <a href="#" class="utilLink" id="settingsBtn">⚙️ Settings</a>
       <a href="#" class="utilLink" id="markBtn">🔖 Mark for Review</a>
     </div>
   </div>
@@ -2174,8 +2204,12 @@ app.get('/start-test/:testId', async (req, res) => {
 
   <div class="bottom">
     <div class="leftActions">
-      <a class="btnLow" href="#" id="endBtn">⏩ End</a>
-      <a class="btnLow" href="#" id="pauseBtn">⏸️ Pause</a>
+       <form id="logoutForm" action="/logout" method="POST" style="display:inline;">
+  <button type="submit" class="btnLow" style="background:#d9534f; color:#fff; border:none; cursor:pointer;">
+    🚪 Logout
+  </button>
+</form>
+
     </div>
     <div class="rightActions">
       ${questionIndex > 0
@@ -2303,7 +2337,7 @@ app.get('/start-test/:testId', async (req, res) => {
     // Render now
             render({
           title: test.title || 'NCLEX-RN Test (Tutored, Untimed)',
-          scenario: q.scenario || '<p><b>Emergency Department</b></p><p><b>1830:</b> Scenario not provided.</p>',
+          scenario: q.scenario || '<p><b>Radiography Test</b></p><p><b>:</b> Questions.</p>',
           vitals: q.vitals || '<p class="muted">No vital signs provided.</p>',
           prompt: q.title || '',
           choices: q.choices || [],
@@ -2803,6 +2837,19 @@ app.use((req, res, next) => {
 
 
 app.get('/', (req, res) => {
+  console.log(`
+===== [ROUTE HIT] GET / =====
+🎯 Purpose
+  • Serve homepage (hero + sign-in form + sections)
+
+🧭 Flow (client-side)
+  1) "Start Free Test Now" → navigates to GET /test-center
+  2) Sign-in form JS → POST /signin-email with { email }
+     • If user exists → JSON { success:true } → client redirects to /test-center
+     • If not found → JSON { success:false, message } → client shows message (or redirects if provided)
+-----------------------------------------------
+`);
+
   res.send(`
   <!doctype html>
   <html>
@@ -2852,7 +2899,7 @@ app.get('/', (req, res) => {
       .search-wrap{ margin-left:auto; display:flex; align-items:center; gap:12px; }
       .search{ display:flex; align-items:center; gap:10px; padding:10px 14px; border:1px solid #e2e6ef; border-radius:24px; width:360px; background:#fff; }
       .search input{ border:0; outline:none; width:100%; background:transparent; font-size:15px; color:#374151; font-style:italic; }
-      .icon{ width:34px; height:34px; border:1px solid #e2e6ef; border-radius:50%; display:grid; place-items:center; color:var(--accent); font-weight:900; }
+      .icon{ width:34px; height:34px; border:1px solid #e2e6ef; border-radius:50%; display:grid; place-items:center; color:#fff; font-weight:900; }
 
       .catnav{ background:#fff; border-bottom:1px solid var(--ring); }
       .catnav-in{ max-width:1200px; margin:0 auto; padding:10px 30px; display:flex; gap:20px; flex-wrap:wrap; font-weight:600; }
@@ -2922,7 +2969,7 @@ app.get('/', (req, res) => {
       th{ background:#fafafa; }
       .faq-item{ background:#fff; padding:15px; border-radius:10px; border:1px solid var(--ring); margin-bottom:10px; }
       .cta-band{ background:var(--accent); color:#fff; text-align:center; padding:50px 20px; border-radius:12px; }
-      .cta-band .cta{ background:#fff; color:var(--accent); }
+      .cta-band .cta{ background:#fff; color:#var(--accent); }
       .blog{ display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:18px; }
       .post{ background:#fff; border:1px solid var(--ring); border-radius:10px; padding:16px; }
       .contact{ display:grid; grid-template-columns:1.1fr .9fr; gap:18px; }
@@ -2947,11 +2994,7 @@ app.get('/', (req, res) => {
       <div class="topband-in">
         <nav class="tabs" id="tabs">
           <a href="#" class="active">Students</a>
-          <a href="#">Educators</a>
-          <a href="#">Clinics</a>
-          <a href="#">Continuing Education</a>
           <a href="#">About</a>
-          <a href="#">Resources</a>
         </nav>
         <div class="top-right">
           <span>Exam Offers</span><span class="flag" aria-hidden="true"></span><span>English</span>
@@ -2979,8 +3022,6 @@ app.get('/', (req, res) => {
       <div class="catnav-in">
         <a href="/test-center">Practice Exams</a>
         <a href="/user/results">My Results</a>
-        <a href="/study-guides">Study Guides</a>
-        <a href="/pricing">Pricing</a>
         <a href="/help">Help</a>
       </div>
     </div>
@@ -2989,11 +3030,22 @@ app.get('/', (req, res) => {
     <div class="hero-wrap">
       <div class="hero-in">
         <div class="main">
-          <div class="left-panel">
-            <h1>Free Trail : Pass Your Radiography Certification</h1>
-            <p>Access a comprehensive library of practice exams for ARRT®/CAMRT Radiography. Simulate real test timing, review image-based explanations, and track weak areas with analytics.</p>
-            <a href="/test-center" class="cta">Start Your First Practice Exam</a>
-          </div>
+         <div class="left-panel" role="region" aria-labelledby="hero-title">
+  <h1 id="hero-title">Radiography Exam Prep — Weekly Releases</h1>
+  <p>Get a new full-length practice exam every week. Train under real test timing, review image-based explanations, and use analytics to target weak areas.</p>
+
+  <ul class="feature-list">
+    <li>Weekly full-length exam drop</li>
+    <li>Realistic timing & scoring</li>
+    <li>Image-based explanations</li>
+    <li>Weak-area analytics & progress tracking</li>
+  </ul>
+
+  <div class="cta-row">
+    <a href="/test-center" class="cta">Start Free Test Now</a>
+  </div>
+</div>
+
 
           <!-- ✅ EMAIL-ONLY SIGN IN -->
           <div class="right-panel">
@@ -3017,10 +3069,10 @@ app.get('/', (req, res) => {
     <!-- WHITE ZONE: everything else (ALL ORIGINAL CONTENT KEPT) -->
     <div class="white-zone">
       <section class="section">
-        <h2>Built by technologists, engineered for exam day</h2>
+        <h2>Where preparation meets confidence on exam day</h2>
         <p>We combine realistic, image-heavy questions with instant feedback and performance analytics so you always know what to study next.</p>
         <div class="grid-3">
-          <div class="feature"><h3>Real Exam Simulation</h3><p>Timed and untimed modes mirror ARRT®/CAMRT structure, including image-based items and mixed difficulty.</p></div>
+          <div class="feature"><h3>Real Exam Simulation</h3><p>Timed and untimed modes mirror Exam structure, including image-based items and mixed difficulty.</p></div>
           <div class="feature"><h3>Granular Analytics</h3><p>See item difficulty, topic breakdowns, and time-per-question to focus where it matters most.</p></div>
           <div class="feature"><h3>Explain Like an Instructor</h3><p>Clear rationales and references after each question build understanding, not just memory.</p></div>
         </div>
@@ -3063,31 +3115,14 @@ app.get('/', (req, res) => {
       <section class="section">
         <h2>Outcomes that matter</h2>
         <div class="stats">
-          <div class="stat"><b>1,200+</b>Image-based items</div>
+          <div class="stat"><b>1,200+</b>Question items</div>
           <div class="stat"><b>95%</b>Report higher confidence</div>
           <div class="stat"><b>24/7</b>Access on any device</div>
           <div class="stat"><b>Real-time</b>Analytics & trends</div>
         </div>
       </section>
 
-      <section class="section">
-        <h2>Know exactly where to focus</h2>
-        <div class="grid-2">
-          <div class="card"><div class="card-in"><h3>Topic heatmaps</h3><p>See accuracy by topic and projection to prioritize study time.</p></div></div>
-          <div class="card"><div class="card-in"><h3>Timing insights</h3><p>Identify questions that consistently take longer than average.</p></div></div>
-          <div class="card"><div class="card-in"><h3>Distractor analysis</h3><p>Review which wrong choices you pick most and why.</p></div></div>
-          <div class="card"><div class="card-in"><h3>Progress trends</h3><p>Track improvement week over week to stay on pace.</p></div></div>
-        </div>
-      </section>
-
-      <section class="section">
-        <h2>Meet your instructors</h2>
-        <div class="people">
-          <div class="person"><div class="avatar">DT</div><b>Doung Tran, MRT(R)</b><div class="small">Positioning & QC</div></div>
-          <div class="person"><div class="avatar">CH</div><b>Cathy Hu, BSc, MRT(R)</b><div class="small">Physics & Protection</div></div>
-          <div class="person"><div class="avatar">JS</div><b>Jordan Singh, RT(R)</b><div class="small">Anatomy & Pathology</div></div>
-        </div>
-      </section>
+    
 
       <section class="section">
         <h2>Your 4-week game plan</h2>
@@ -3108,44 +3143,7 @@ app.get('/', (req, res) => {
         </div>
       </section>
 
-      <section class="section">
-        <h2>Choose your plan</h2>
-        <div class="pricing">
-          <div class="price-card">
-            <h3>Free</h3>
-            <div class="price">$0</div>
-            <div class="small">Starter access</div>
-            <ul style="text-align:left; line-height:1.6;">
-              <li>2 practice exams</li>
-              <li>Basic analytics</li>
-              <li>Limited explanations</li>
-            </ul>
-            <a href="/register" class="cta" style="margin-top:10px;">Get Started</a>
-          </div>
-          <div class="price-card">
-            <h3>Pro</h3>
-            <div class="price">$29/mo</div>
-            <div class="small">Most popular</div>
-            <ul style="text-align:left; line-height:1.6;">
-              <li>Unlimited exams</li>
-              <li>Full explanations & references</li>
-              <li>Advanced analytics</li>
-            </ul>
-            <a href="/pricing" class="cta" style="margin-top:10px;">Upgrade</a>
-          </div>
-          <div class="price-card">
-            <h3>Premium</h3>
-            <div class="price">$49/mo</div>
-            <div class="small">For power users</div>
-            <ul style="text-align:left; line-height:1.6;">
-              <li>Everything in Pro</li>
-              <li>Priority support</li>
-              <li>Extra image libraries</li>
-            </ul>
-            <a href="/pricing" class="cta" style="margin-top:10px;">Go Premium</a>
-          </div>
-        </div>
-      </section>
+      
 
       <section class="section">
         <h2>How we compare</h2>
@@ -3164,27 +3162,12 @@ app.get('/', (req, res) => {
         </div>
       </section>
 
-      <section class="section">
-        <h2>Frequently asked questions</h2>
-        <div class="faq-item"><h3>Is this affiliated with ARRT® or CAMRT®?</h3><p>No. We are independent and our content is aligned to publicly available blueprints.</p></div>
-        <div class="faq-item"><h3>Can I cancel anytime?</h3><p>Yes—subscriptions are month-to-month.</p></div>
-        <div class="faq-item"><h3>Do you offer group pricing?</h3><p>Yes—contact us for educator/clinic plans.</p></div>
-      </section>
-
-      <section class="section">
-        <h2>Latest study tips</h2>
-        <div class="blog">
-          <div class="post"><b>Mastering chest positioning</b><p class="small">Landmarks, rotation checks, and common pitfalls.</p><a href="/blog/chest-positioning" class="cta" style="padding:8px 12px; font-size:.95rem;">Read</a></div>
-          <div class="post"><b>Beat the clock: pacing strategies</b><p class="small">How to avoid spending too long on image-heavy items.</p><a href="/blog/pacing" class="cta" style="padding:8px 12px; font-size:.95rem;">Read</a></div>
-          <div class="post"><b>Radiation protection myths</b><p class="small">What matters, what doesn’t, and how it’s tested.</p><a href="/blog/protection-myths" class="cta" style="padding:8px 12px; font-size:.95rem;">Read</a></div>
-        </div>
-      </section>
-
+      
+    
       <section class="section">
         <div class="cta-band">
-          <h2>Your Essential Training & Exam Prep for ARRT®/CAMRT Radiography</h2>
-          <p>Start free, then upgrade when you’re ready. No credit card needed to practice.</p>
-          <a href="/register" class="cta">Create Free Account</a>
+          <h2>Your Essential Training & Exam Prep for Radiography Exam</h2>
+          <p> Free weekly exams, Maximus your potential.</p>
         </div>
       </section>
     </div>
@@ -3212,22 +3195,38 @@ app.get('/', (req, res) => {
           const msg = document.getElementById('signinMsg');
           msg.textContent = '';
 
-          if (!email) { msg.textContent = 'Please enter your email.'; return; }
+          console.log('===== [UI] Sign-In Attempt =====');
+          console.log('📥 Email entered:', email || '(empty)');
+
+          if (!email) { 
+            msg.textContent = 'Please enter your email.'; 
+            console.log('❌ Validation failed: email missing');
+            return; 
+          }
 
           try {
+            console.log('➡️  POST /signin-email', { email });
             const res = await fetch('/signin-email', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ email })
             });
-            const data = await res.json();
+            const data = await res.json().catch(() => ({}));
+            console.log('⬅️  Response from /signin-email:', data);
 
             if (data.success) {
+              console.log('✅ Sign-in success → redirecting to /test-center');
               window.location.href = '/test-center';
             } else {
+              console.log('❌ Sign-in failed');
               msg.textContent = data.message || 'Email not found. Please create an account.';
+              if (data.redirect) {
+                console.log('↪️  Redirecting to:', data.redirect);
+                window.location.href = data.redirect;
+              }
             }
           } catch (err) {
+            console.error('💥 [UI] Error during sign-in:', err);
             msg.textContent = 'Something went wrong. Please try again.';
           }
         });
@@ -3237,17 +3236,97 @@ app.get('/', (req, res) => {
   </html>
   `);
 });
+app.post('/signin-email', async (req, res) => {
+  console.log(`
+===== [ROUTE HIT] POST /signin-email =====
+📥 Payload
+  • raw email: ${req.body?.email ?? '(empty)'}
+-----------------------------------------------
+Policy:
+  • Allow sign-in ONLY if user exists AND onboarding complete
+  • Otherwise → force them to /login to finish profile
+-----------------------------------------------
+`);
+
+  try {
+    let email = (req.body?.email || '').trim().toLowerCase();
+    const EMAIL_RX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+    if (!EMAIL_RX.test(email)) {
+      console.log('❌ Invalid email format:', JSON.stringify(email));
+      return res.status(400).json({ success: false, message: 'Please enter a valid email.' });
+    }
+
+    console.log('🔎 Looking up user by email:', email);
+    const user = await User.findOne({ email }).lean();
+
+    if (!user) {
+      // No account → must go to /login to create + fill profile
+      if (req.session) { req.session.userId = null; req.session.userName = null; }
+      console.log('❌ No user found → redirecting to /login for onboarding');
+      return res.json({
+        success: false,
+        message: 'No account found for this email. Please complete onboarding.',
+        redirect: '/login'
+      });
+    }
+
+    // Found an account, but is their profile complete?
+    if (!isProfileComplete(user)) {
+      if (req.session) { req.session.userId = null; req.session.userName = null; }
+      console.log('⚠️  User found but onboarding incomplete → redirecting to /login');
+      return res.json({
+        success: false,
+        message: 'Please complete your profile (name, country, state/province, exam date) to sign in.',
+        redirect: '/login'
+      });
+    }
+
+    // ✅ Good to go — set session and allow access
+    req.session.userId = user._id;
+    req.session.userName = user.name;
+    console.log(`✅ Sign-in allowed for ${user.name} <${user.email}> (onboarding complete)`);
+    return res.json({ success: true });
+
+  } catch (err) {
+    console.error('💥 ERROR in /signin-email:', err);
+    return res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
 
 
-// ✅ Test Center Route
+// ✅ Test Center Route (updated)
+// ✅ Test Center Route (UX-only auto close date)
 app.get('/test-center', requireLogin, async (req, res) => {
   const tests = await Test.find().sort({ createdAt: -1 });
   const now = new Date();
 
   // ⚠️ Admin message (could later come from DB)
-  const adminMessage = "⚠️ Scheduled maintenance on Sunday 10 PM - 12 AM. Please save progress.";
+  const adminMessage = "⚠️ Scheduled maintenance on Sundays 10 PM - 12 AM.";
 
-  // ⏱️ Calculate time window
+  // ✅ Fetch total questions per test
+  const counts = await Question.aggregate([
+    { $group: { _id: '$testId', count: { $sum: 1 } } }
+  ]);
+  const questionCountByTest = new Map(counts.map(c => [String(c._id), c.count]));
+
+  // 🔎 Helpers (UX-only close date; no DB writes)
+  const DEFAULT_CLOSE_DAYS = 7;
+
+  function fmtDateYYYYMMDD(d) {
+    if (!d) return '—';
+    return new Date(d).toISOString().split('T')[0];
+  }
+
+  function computeCloseDate(test, days = DEFAULT_CLOSE_DAYS) {
+    if (test.endDate) return new Date(test.endDate); // show real close if set
+    const base = test.startDate ? new Date(test.startDate) : new Date(test.createdAt);
+    const d = new Date(base);
+    d.setDate(d.getDate() + days);
+    return d; // display-only
+  }
+
+  // ⏱️ Calculate time window (unchanged)
   function timeWindow(createdAt, limitMinutes = 60) {
     const totalMs = limitMinutes * 60_000;
     const end = new Date(createdAt.getTime() + totalMs);
@@ -3270,24 +3349,24 @@ app.get('/test-center', requireLogin, async (req, res) => {
     return { msLeft, pctUsed, label };
   }
 
-  // 🎨 Status color logic
+  // 🎨 Status color logic (unchanged)
   function statusColor(msLeft, isActive) {
-    if (!isActive) return '#9aa0a6';        // gray for inactive
-    if (msLeft <= 0) return '#d93025';      // red for expired
-    if (msLeft <= 15 * 60_000) return '#f9ab00'; // yellow for almost over
-    return '#1a73e8';                       // blue for normal
+    if (!isActive) return '#9aa0a6';
+    if (msLeft <= 0) return '#d93025';
+    if (msLeft <= 15 * 60_000) return '#f9ab00';
+    return '#1a73e8';
   }
 
-  // 🧮 Days left helper
+  // 🧮 Days left helper (unchanged)
   function daysLeftLabel(date) {
     const diffMs = date - now;
     const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-    if (diffDays < 0) return '⏳ passed';
+    if (diffDays < 0) return '';
     if (diffDays === 0) return '⏳ today';
     return `${diffDays}d left`;
   }
 
-  // 📝 Build sidebar exam grid
+  // 📝 Build sidebar exam grid (unchanged)
   const examGrid = tests.map(t => {
     const dateStr = t.createdAt.toLocaleDateString('en-US', {
       month: 'short', day: '2-digit', year: 'numeric'
@@ -3295,11 +3374,22 @@ app.get('/test-center', requireLogin, async (req, res) => {
     return `<div>📅 ${dateStr} – ${daysLeftLabel(t.createdAt)}</div>`;
   }).join('');
 
-  // 📝 Build table rows
+  // 📝 Build table rows with Released / Closes (UX-only) / Questions
   const rows = tests.map(t => {
     const isActive = t.isActive !== false;
     const win = timeWindow(t.createdAt, t.timeLimit || 60);
     const color = statusColor(win.msLeft, isActive);
+
+    // Released: prefer startDate, else createdAt
+    const releasedStr = t.startDate
+      ? fmtDateYYYYMMDD(t.startDate)
+      : (t.createdAt ? fmtDateYYYYMMDD(t.createdAt) : '—');
+
+    // Closes: UX-only (endDate if set; else Released + 7 days; no DB change)
+    const closesStr = fmtDateYYYYMMDD(computeCloseDate(t));
+
+    // Questions count
+    const qCount = questionCountByTest.get(String(t._id)) || 0;
 
     return `
       <tr class="grid-row">
@@ -3307,14 +3397,15 @@ app.get('/test-center', requireLogin, async (req, res) => {
           <strong>${t.title}</strong><br>
           <span class="desc">${t.description || '— No description —'}</span>
         </td>
-        <td>${t.createdAt.toISOString().split('T')[0]}</td>
-        <td>—</td>
+        <td>${releasedStr}</td>
+        <td>${closesStr}</td>
         <td>
           <div class="progress-bar">
             <div class="progress-fill" style="width:${win.pctUsed}%"></div>
           </div>
           <div class="small-text">${win.pctUsed}% used · ${win.label}</div>
         </td>
+        <td>${qCount}</td>
         <td style="text-align:right">
           <form action="/start-test/${t._id}" method="GET">
             <button class="start-btn" ${!isActive ? 'disabled' : ''}>
@@ -3326,7 +3417,7 @@ app.get('/test-center', requireLogin, async (req, res) => {
     `;
   }).join('');
 
-  // 📤 Render page
+  // 📤 Render page (unchanged styles except table headers)
   res.send(`
 <!DOCTYPE html>
 <html>
@@ -3462,7 +3553,7 @@ app.get('/test-center', requireLogin, async (req, res) => {
   <div class="main">
     <div class="admin-bar">
       <div>${adminMessage}</div>
-      <button onclick="navigator.clipboard.writeText('${adminMessage}')">Copy</button>
+      <button onclick="navigator.clipboard.writeText('${adminMessage}')"></button>
     </div>
 
     <div class="card">
@@ -3476,16 +3567,21 @@ app.get('/test-center', requireLogin, async (req, res) => {
 
     <div class="navbar">
       <button onclick="location.href='/dashboard'">🏠 Dashboard</button>
-      <button onclick="location.href='/results'">📊 Results</button>
-      <button onclick="location.href='/practice'">📝 Practice</button>
-      <button onclick="location.href='/settings'">⚙️ Settings</button>
+      <button onclick="location.href='/performance'">📊 Results</button>
     </div>
 
     <h2>📋 Available Tests</h2>
     <div class="hr-accent"></div>
     <table>
       <thead>
-        <tr><th>Test</th><th>Date</th><th>Positioning</th><th>Technique</th><th></th></tr>
+        <tr>
+          <th>Test</th>
+          <th>Released</th>
+          <th>Closes</th>
+          <th>Technique</th>
+          <th>Questions</th>
+          <th></th>
+        </tr>
       </thead>
       <tbody>${rows}</tbody>
     </table>
@@ -3494,7 +3590,6 @@ app.get('/test-center', requireLogin, async (req, res) => {
 </html>
   `);
 });
-
 
 
 
@@ -3671,10 +3766,8 @@ app.get('/performance', requireLogin, async (req, res) => {
     </div>
 
     <div class="navbar">
-      <button onclick="location.href='/dashboard'">🏠 Dashboard</button>
-      <button onclick="location.href='/results'">📁 Results</button>
-      <button onclick="location.href='/test-center'">📝 Practice</button>
-      <button onclick="location.href='/settings'">⚙️ Settings</button>
+      <button onclick="location.href='/Test-center'">🏠 Dashboard</button>
+
     </div>
 
     <h2>📊 Overview</h2>
@@ -4788,7 +4881,32 @@ app.get('/', (req, res) => {
       .left-panel{ flex:2; padding:40px; background:#fff; border:1px solid var(--ring); border-radius:8px; }
       .left-panel h1{ color:var(--accent); font-size:2rem; margin-bottom:10px; }
       .left-panel p{ font-size:1rem; margin-bottom:20px; color:#222; }
-      .cta{ background:var(--brand); color:#fff; padding:12px 20px; text-decoration:none; border-radius:6px; font-weight:700; display:inline-block; }
+      .cta {
+  background: var(--brand);
+  color: #fff;
+  padding: 14px 28px;
+  text-decoration: none;
+  border-radius: 8px;
+  font-weight: 700;
+  font-size: 1rem;
+  display: inline-block;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  transition: all 0.25s ease-in-out;
+  letter-spacing: 0.5px;
+}
+
+/* Hover State */
+.cta:hover {
+  background: var(--brand-hover, #0056b3);
+  transform: translateY(-2px) scale(1.03);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.25);
+}
+
+/* Active / Clicked State */
+.cta:active {
+  transform: translateY(1px) scale(0.97);
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.2);
+}
 
       .right-panel{ flex:1; background:#fff; padding:24px; border:1px solid var(--ring); border-radius:8px; }
       .right-panel h3{ margin-top:0; }
@@ -5024,19 +5142,6 @@ app.get('/', (req, res) => {
       </section>
 
       <section class="section">
-        <h2>Choose your plan</h2>
-        <div class="pricing">
-          <div class="price-card">
-            <h3>Free</h3>
-            <div class="price">$0</div>
-            <div class="small">Starter access</div>
-            <ul style="text-align:left; line-height:1.6;">
-              <li>2 practice exams</li>
-              <li>Basic analytics</li>
-              <li>Limited explanations</li>
-            </ul>
-            <a href="/register" class="cta" style="margin-top:10px;">Get Started</a>
-          </div>
           <div class="price-card">
             <h3>Pro</h3>
             <div class="price">$29/mo</div>
@@ -5079,21 +5184,6 @@ app.get('/', (req, res) => {
         </div>
       </section>
 
-      <section class="section">
-        <h2>Frequently asked questions</h2>
-        <div class="faq-item"><h3>Is this affiliated with ARRT® or CAMRT®?</h3><p>No. We are independent and our content is aligned to publicly available blueprints.</p></div>
-        <div class="faq-item"><h3>Can I cancel anytime?</h3><p>Yes—subscriptions are month-to-month.</p></div>
-        <div class="faq-item"><h3>Do you offer group pricing?</h3><p>Yes—contact us for educator/clinic plans.</p></div>
-      </section>
-
-      <section class="section">
-        <h2>Latest study tips</h2>
-        <div class="blog">
-          <div class="post"><b>Mastering chest positioning</b><p class="small">Landmarks, rotation checks, and common pitfalls.</p><a href="/blog/chest-positioning" class="cta" style="padding:8px 12px; font-size:.95rem;">Read</a></div>
-          <div class="post"><b>Beat the clock: pacing strategies</b><p class="small">How to avoid spending too long on image-heavy items.</p><a href="/blog/pacing" class="cta" style="padding:8px 12px; font-size:.95rem;">Read</a></div>
-          <div class="post"><b>Radiation protection myths</b><p class="small">What matters, what doesn’t, and how it’s tested.</p><a href="/blog/protection-myths" class="cta" style="padding:8px 12px; font-size:.95rem;">Read</a></div>
-        </div>
-      </section>
 
       <section class="section">
         <div class="cta-band">
